@@ -1,0 +1,20 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Blocked — StockScope{% endblock %}
+{% block content %}
+<h1>Blocked signals</h1>
+<table>
+  <thead><tr><th>When</th><th>Symbol</th><th>Reasons</th><th>Prob</th></tr></thead>
+  <tbody>
+  {% for s in signals %}
+    <tr>
+      <td>{{ s.created_at }}</td>
+      <td>{{ s.instrument.symbol }}</td>
+      <td>{{ s.skip_reason }}</td>
+      <td>{{ s.probability }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="4" class="muted">None blocked yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

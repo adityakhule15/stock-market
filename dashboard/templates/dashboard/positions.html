@@ -1,0 +1,998 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Positions — StockScope{% endblock %}
+{% block content %}
+{{ live_snap|json_script:"boot-live-snap" }}
+<div class="pos-head">
+  <div>
+    <h1 style="margin:0">Positions</h1>
+    <p class="muted" style="margin:0.25rem 0 0">Broker book · Groww charges · live LTP while this page is open · paper records only</p>
+  </div>
+  <div class="row" style="gap:0.5rem;align-items:center">
+    <label class="muted" style="font-size:0.85rem" title="LTP poll interval">
+      Refresh (sec)
+      <input type="number" id="live-refresh-sec" min="5" max="120" step="1" value="{{ live_refresh_sec|default:10 }}" style="width:4.2rem" />
+    </label>
+    <button type="button" class="btn" id="btn-save-refresh" title="Save refresh interval">Save</button>
+    <button type="button" class="btn" id="btn-advise-all" title="Local rules + model; Gemini coach only">Ask advisor: HOLD/SELL all</button>
+    <button type="button" class="btn" id="btn-add-order">+ Add Groww order</button>
+    <div class="pos-tabs" id="pos-tabs">
+      <button type="button" class="pos-tab active" data-filter="open">Open</button>
+      <button type="button" class="pos-tab" data-filter="closed">Closed</button>
+      <button type="button" class="pos-tab" data-filter="all">All</button>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <div class="row" style="justify-content:space-between;gap:0.75rem;margin-bottom:0.5rem">
+    <h3 style="margin:0">Day book</h3>
+    <form class="row" method="get" action="{% url 'positions' %}" style="gap:0.5rem">
+      <input type="date" name="day" value="{{ day_book_date }}" />
+      <button type="submit">Show</button>
+    </form>
+  </div>
+  <div class="kv" style="margin-bottom:0.65rem">
+    <span>Date</span><span>{{ day_book_date }}</span>
+    <span>P&amp;L (gross) · all today</span><span id="day-gross" class="{% if day_book.totals.gross_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ day_book.totals.gross_pnl }}</span>
+    <span>Charges</span><span>₹{{ day_book.totals.charges_total }}</span>
+    <span>P&amp;L (net chg) · all today</span><span id="day-net" class="{% if day_book.totals.net_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}"><strong>₹{{ day_book.totals.net_pnl }}</strong></span>
+  </div>
+  <p class="muted" style="margin:0 0 0.65rem;font-size:0.82rem">
+    Closed realized ₹{{ day_book.totals.closed_gross_pnl }} gross / ₹{{ day_book.totals.closed_net_pnl }} net
+    · Open MTM ₹{{ day_book.totals.open_gross_pnl }} gross / ₹{{ day_book.totals.open_net_pnl }} net
+  </p>
+  <table>
+    <thead><tr><th>Contract</th><th>Side</th><th>Gross</th><th>Charges</th><th>Net</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for r in day_book.closed %}
+      <tr{% if r.is_dummy %} class="is-dummy"{% endif %}>
+        <td>{{ r.contract }}{% if r.is_dummy %} <span class="badge warn">DUMMY</span>{% endif %}</td>
+        <td>{{ r.side }}</td>
+        <td class="{% if r.gross_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.gross_pnl }}</td>
+        <td>₹{{ r.charges_total }}</td>
+        <td class="{% if r.net_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.net_pnl }}</td>
+        <td>closed{% if r.is_dummy %} · dummy{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="muted">No closed trades this date.</td></tr>
+      {% endfor %}
+      {% for r in day_book.open_activity %}
+      <tr{% if r.is_dummy %} class="is-dummy"{% endif %}>
+        <td>{{ r.contract }}{% if r.is_dummy %} <span class="badge warn">DUMMY</span>{% endif %}</td>
+        <td>{{ r.side }}</td>
+        <td class="{% if r.gross_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.gross_pnl }}</td>
+        <td>₹{{ r.charges_total }}</td>
+        <td class="{% if r.net_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.net_pnl }}</td>
+        <td>open{% if r.is_dummy %} · dummy{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div id="manual-form" class="card manual-form" hidden>
+  <h3 style="margin:0 0 0.6rem">Dummy Groww order (record only)</h3>
+  <p class="muted" style="margin-top:0;font-size:0.85rem">Does not place on Groww. Set lots, stop loss &amp; target as you entered on Groww.</p>
+  <div class="manual-grid">
+    <label>Symbol <input id="m-symbol" value="NIFTY" /></label>
+    <label>Side <select id="m-side"><option>BUY</option><option>SELL</option></select></label>
+    <label>Product <select id="m-product"><option>NRML</option><option>CNC</option><option>MIS</option></select></label>
+    <label>Option <select id="m-opt"><option value="CE">CE</option><option value="PE">PE</option><option value="">Equity</option></select></label>
+    <label>Strike <input id="m-strike" type="number" step="0.05" placeholder="26500" /></label>
+    <label>Lots <input id="m-qty" type="number" value="1" min="1" title="Number of lots (F&O) or shares (equity)" /></label>
+    <label>Lot size <input id="m-lot" type="number" value="65" min="1" title="Units per lot e.g. NIFTY 65" /></label>
+    <label>Buy / entry LTP <input id="m-entry" type="number" step="0.05" /></label>
+    <label>Stop loss <input id="m-stop" type="number" step="0.05" /></label>
+    <label>Target <input id="m-target" type="number" step="0.05" /></label>
+    <label>Sell LTP (if closed) <input id="m-exit" type="number" step="0.05" placeholder="optional" /></label>
+    <label>Mistake note <input id="m-mistake" placeholder="e.g. held past SL" /></label>
+    <label>Notes <input id="m-notes" placeholder="Groww order id / ref" /></label>
+    <label class="row" style="gap:0.4rem;align-items:center">
+      <input type="checkbox" id="m-dummy" />
+      Mark as dummy (practice — excluded from wallet / Today P&amp;L)
+    </label>
+  </div>
+  <div class="row" style="margin-top:0.75rem">
+    <button type="button" id="btn-preview-charges">Preview Groww charges</button>
+    <button type="button" id="btn-save-manual">Save record</button>
+    <button type="button" class="btn-ghost" id="btn-cancel-manual">Cancel</button>
+    <span id="m-status" class="muted"></span>
+  </div>
+  <pre id="m-preview" class="muted" style="margin:0.5rem 0 0;white-space:pre-wrap;font-size:0.8rem"></pre>
+</div>
+
+<div id="edit-form" class="card manual-form" hidden>
+  <h3 style="margin:0 0 0.6rem">Edit order <span id="e-contract" class="muted" style="font-weight:500;font-size:0.9rem"></span></h3>
+  <p class="muted" style="margin-top:0;font-size:0.85rem">Change lots, stop loss and target you entered. Wallet reserved cash updates if lots/entry change.</p>
+  <input type="hidden" id="e-id" value="" />
+  <div class="manual-grid">
+    <label>Lots <input id="e-lots" type="number" min="1" step="1" /></label>
+    <label>Avg / entry LTP <input id="e-entry" type="number" step="0.05" /></label>
+    <label>Stop loss <input id="e-stop" type="number" step="0.05" /></label>
+    <label>Target <input id="e-target" type="number" step="0.05" /></label>
+  </div>
+  <div class="row" style="margin-top:0.75rem">
+    <button type="button" id="btn-save-edit">Save changes</button>
+    <button type="button" class="btn-ghost" id="btn-cancel-edit">Cancel</button>
+    <span id="e-status" class="muted"></span>
+  </div>
+</div>
+
+<div class="broker-strip">
+  <div class="bs-item"><span class="bs-label">Invested</span><strong id="sum-invested">—</strong></div>
+  <div class="bs-item"><span class="bs-label">Current value</span><strong id="sum-current">—</strong></div>
+  <div class="bs-item"><span class="bs-label">Open P&amp;L (gross)</span><strong id="sum-open-only-pnl">{% if analysis.open_pnl_total != None %}{{ analysis.open_pnl_total }}{% else %}…{% endif %}</strong></div>
+  <div class="bs-item"><span class="bs-label">Open P&amp;L (net chg)</span><strong id="sum-open-only-pnl-net">…</strong></div>
+  <div class="bs-item"><span class="bs-label">Today P&amp;L (gross)</span><strong id="sum-today-pnl">{% if analysis.today_pnl_gross != None %}{{ analysis.today_pnl_gross }}{% else %}…{% endif %}</strong></div>
+  <div class="bs-item"><span class="bs-label">Today P&amp;L (net chg)</span><strong id="sum-today-pnl-net">{% if analysis.today_pnl_net != None %}{{ analysis.today_pnl_net }}{% else %}…{% endif %}</strong></div>
+  <div class="bs-item"><span class="bs-label">Equity (mark)</span><strong id="sum-equity-mark">{% if analysis.equity_mark %}₹{{ analysis.equity_mark }}{% else %}…{% endif %}</strong></div>
+  <div class="bs-item"><span class="bs-label">Cash / wallet</span><strong id="sum-cash">₹{{ analysis.cash|default:analysis.equity }}</strong></div>
+  <div class="bs-item muted-item">
+    <span class="bs-label">Live</span>
+    <span id="live-asof">{{ analysis.live_as_of|default:"—" }}</span>
+    <span class="muted" id="live-transport">starting…</span>
+  </div>
+</div>
+
+<div class="broker-table-wrap">
+<table class="broker-table">
+  <thead>
+    <tr>
+      <th>Instrument</th><th>Product</th><th>Side</th><th class="num">Qty</th>
+      <th class="num">Avg</th><th class="num">LTP</th><th class="num">Invested</th>
+      <th class="num">Cur. value</th><th class="num">P&amp;L</th><th>SL / Target</th><th>Advice</th><th></th>
+    </tr>
+  </thead>
+  <tbody id="pos-body">
+  {% for row in positions %}
+    {% with p=row.pos %}
+    <tr id="row-{{ p.id }}" data-id="{{ p.id }}" data-status="{{ p.status }}"
+        data-lots="{% if row.lots %}{{ row.lots }}{% else %}{{ p.qty }}{% endif %}"
+        data-entry="{{ p.entry_price }}" data-stop="{{ p.stop }}" data-target="{{ p.target }}"
+        data-contract="{{ row.contract }}" data-isfno="{% if row.is_fno %}1{% else %}0{% endif %}"
+        data-dummy="{% if p.is_dummy %}1{% else %}0{% endif %}"
+        class="pos-row {% if p.status == 'closed' %}is-closed{% endif %} {% if p.is_dummy %}is-dummy{% endif %}">
+      <td>
+        <div class="inst-name contract">{{ row.contract }}
+          {% if p.is_dummy %}<span class="badge warn kind-badge" id="kind-{{ p.id }}">DUMMY</span>
+          {% else %}<span class="badge pass kind-badge" id="kind-{{ p.id }}" style="opacity:0.7">ORIGINAL</span>{% endif %}
+        </div>
+        <div class="inst-meta muted">{% if row.is_fno %}F&amp;O{% else %}EQ{% endif %} · {{ p.instrument.symbol }}</div>
+      </td>
+      <td class="product">{% if row.product %}{{ row.product }}{% elif p.signal_id %}{{ p.signal.product }}{% else %}—{% endif %}</td>
+      <td><span class="side-pill {{ p.side|lower }}">{{ p.side }}</span></td>
+      <td class="num qty">{{ row.qty_label }}</td>
+      <td class="num entry">{{ p.entry_price }}</td>
+      <td class="num ltp flash">{% if row.ltp %}{{ row.ltp }}{% else %}—{% endif %}</td>
+      <td class="num invested">{% if row.invested %}₹{{ row.invested }}{% else %}—{% endif %}</td>
+      <td class="num current">{% if row.current_value %}₹{{ row.current_value }}{% else %}—{% endif %}</td>
+      <td class="num pnl">
+        {% if p.status == "closed" %}
+          <span class="{% if p.pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ p.pnl }}</span>
+          <div class="muted" style="font-size:0.7rem">net of charges</div>
+        {% elif row.open_pnl is not None %}
+          <span class="{% if row.open_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ row.open_pnl }}</span>
+          {% if row.open_pnl_net is not None %}<div class="pnl-pct">net {{ row.open_pnl_net }}</div>{% endif %}
+          {% if row.pnl_pct is not None %}<div class="pnl-pct {% if row.pnl_pct >= 0 %}pnl-up{% else %}pnl-down{% endif %}">{{ row.pnl_pct }}%</div>{% endif %}
+        {% else %}—{% endif %}
+      </td>
+      <td class="levels">
+        <div><span class="muted">SL</span> <span class="stop">{{ p.stop }}</span></div>
+        <div><span class="muted">Tgt</span> <span class="target">{{ p.target }}</span></div>
+      </td>
+      <td class="suggest">
+        {% if p.status == "open" %}
+        <span class="badge {% if row.suggestion.code == 'HOLD' or row.suggestion.code == 'TRAIL' %}pass{% elif row.suggestion.code == 'WAIT' %}age{% else %}block{% endif %}">{{ row.suggestion.label }}</span>
+        <div class="muted sug-detail">{{ row.suggestion.detail }}</div>
+        {% else %}<span class="muted">closed</span>{% endif %}
+      </td>
+      <td class="actions">
+        <div class="act-row">
+          <button type="button" class="btn-ghost" data-act="toggle-kind" data-id="{{ p.id }}"
+                  title="Toggle dummy / original (works after close too)">
+            {% if p.is_dummy %}→ Original{% else %}→ Dummy{% endif %}
+          </button>
+          {% if p.status == "open" %}
+          <button type="button" class="btn-ghost" data-act="advise" data-id="{{ p.id }}" title="Ask advisor HOLD or SELL">?</button>
+          <button type="button" class="btn-ghost" data-act="reanalyze" data-id="{{ p.id }}" title="Reanalyze">↻</button>
+          <button type="button" class="btn-ghost" data-act="edit" data-id="{{ p.id }}" title="Edit">✎</button>
+          <button type="button" class="btn-ghost danger" data-act="delete" data-id="{{ p.id }}" title="Delete">✕</button>
+          {% endif %}
+        </div>
+        {% if p.status == "open" %}
+        <div class="advise-box muted" id="advise-{{ p.id }}" style="font-size:0.75rem;margin-top:0.35rem;max-width:14rem;white-space:pre-wrap"></div>
+        <div class="act-close">
+          <input id="exit-{{ p.id }}" type="number" step="0.05" value="{% if row.ltp %}{{ row.ltp }}{% else %}{{ p.target }}{% endif %}" title="Exit LTP" />
+          <select id="reason-{{ p.id }}">
+            <option value="manual">Exit</option>
+            <option value="target">Target</option>
+            <option value="stop">SL</option>
+          </select>
+          <button type="button" class="btn-close" data-act="close" data-id="{{ p.id }}">Square off</button>
+        </div>
+        {% endif %}
+      </td>
+    </tr>
+    <tr id="fills-{{ p.id }}" class="fills-row {% if p.status == 'closed' %}is-closed{% endif %}" data-status="{{ p.status }}">
+      <td colspan="12">
+        <div class="fills-box" id="fills-box-{{ p.id }}">
+          {% for f in p.fills.all %}
+          <div class="fill-leg {{ f.side|lower }}">
+            <strong>{{ f.side }}</strong>
+            @ ₹{{ f.price }} · {{ f.units }} u · turn ₹{{ f.turnover }}
+            · chg ₹{{ f.charges_total }}
+            (brkr {{ f.charges.brokerage|default:"—" }} · STT {{ f.charges.stt|default:"—" }} · exch {{ f.charges.exchange|default:"—" }} · GST {{ f.charges.gst|default:"—" }})
+            · net {{ f.net_cash_flow }}
+            <span class="muted">· {{ f.source }} · {{ f.broker }}</span>
+            {% if f.mistake_note %}<div class="mistake">Mistake: {{ f.mistake_note }}</div>{% endif %}
+          </div>
+          {% empty %}
+          <span class="muted">No buy/sell legs yet</span>
+          {% endfor %}
+        </div>
+      </td>
+    </tr>
+    {% endwith %}
+  {% empty %}
+    <tr class="empty-row"><td colspan="12" class="muted">No positions. Confirm a signal or add a Groww order record.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<pre id="pos-out" class="muted" style="margin-top:1rem;white-space:pre-wrap"></pre>
+
+<style>
+  .pos-head { display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; flex-wrap:wrap; margin-bottom:1rem; }
+  .pos-tabs { display:flex; gap:0.35rem; }
+  .pos-tab {
+    background:#1a222c; color:var(--muted); border:1px solid var(--line);
+    padding:0.35rem 0.85rem; border-radius:999px; cursor:pointer; font-weight:600;
+  }
+  .pos-tab.active { background:rgba(47,158,68,0.2); color:#69db7c; border-color:rgba(47,158,68,0.5); }
+  .broker-strip {
+    display:grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap:0.65rem; margin-bottom:1rem; padding:0.85rem 1rem;
+    background:linear-gradient(180deg, #15202b, #121820);
+    border:1px solid var(--line); border-radius:10px;
+  }
+  .bs-item { display:flex; flex-direction:column; gap:0.2rem; }
+  .bs-label { font-size:0.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; }
+  .bs-item strong { font-size:1.05rem; font-variant-numeric: tabular-nums; }
+  .muted-item { font-size:0.8rem; color:var(--muted); }
+  .broker-table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:#10161e; }
+  .broker-table { width:100%; border-collapse:collapse; margin:0; }
+  .broker-table th {
+    position:sticky; top:0; background:#0c1218; color:var(--muted);
+    font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;
+    padding:0.65rem 0.55rem; border-bottom:1px solid var(--line); white-space:nowrap;
+  }
+  .broker-table td {
+    padding:0.7rem 0.55rem; border-bottom:1px solid rgba(42,53,68,0.7);
+    vertical-align:top; font-variant-numeric: tabular-nums;
+  }
+  .broker-table tr.pos-row:hover { background:rgba(61,156,240,0.06); }
+  .broker-table tr.is-closed { opacity:0.72; }
+  .broker-table tr.is-dummy { outline: 1px dashed rgba(212,160,23,0.45); }
+  .kind-badge { margin-left:0.35rem; font-size:0.65rem; vertical-align:middle; }
+  .num { text-align:right; }
+  .inst-name { font-weight:700; font-size:0.95rem; }
+  .inst-meta { font-size:0.72rem; margin-top:0.15rem; }
+  .side-pill { display:inline-block; padding:0.12rem 0.45rem; border-radius:4px; font-size:0.75rem; font-weight:700; }
+  .side-pill.buy { background:rgba(47,158,68,0.2); color:#69db7c; }
+  .side-pill.sell { background:rgba(201,42,42,0.2); color:#ff8787; }
+  .pnl-up { color:#69db7c; font-weight:700; }
+  .pnl-down { color:#ff8787; font-weight:700; }
+  .pnl-pct { font-size:0.72rem; font-weight:600; }
+  .levels { font-size:0.82rem; white-space:nowrap; }
+  .sug-detail { font-size:0.7rem; margin-top:0.2rem; max-width:12rem; }
+  .act-row { display:flex; gap:0.25rem; }
+  .btn-ghost {
+    background:transparent; color:var(--muted); border:1px solid var(--line);
+    border-radius:6px; padding:0.25rem 0.45rem; cursor:pointer; font-size:0.95rem;
+  }
+  .btn-ghost:hover { color:var(--text); border-color:#4c5d72; }
+  .btn-ghost.danger:hover { color:#ff8787; border-color:#c92a2a; }
+  .act-close { display:flex; gap:0.25rem; margin-top:0.4rem; align-items:center; }
+  .act-close input { width:4.6rem; padding:0.25rem 0.35rem; font-size:0.8rem; }
+  .act-close select { padding:0.25rem; font-size:0.75rem; }
+  .btn-close {
+    background:#3d9cf0; color:#041018; border:0; border-radius:5px;
+    padding:0.3rem 0.5rem; font-size:0.75rem; font-weight:700; cursor:pointer;
+  }
+  .ltp.flash-up { animation: flashUp 0.6s ease; }
+  .ltp.flash-down { animation: flashDown 0.6s ease; }
+  @keyframes flashUp { from { background:rgba(47,158,68,0.35); } to { background:transparent; } }
+  @keyframes flashDown { from { background:rgba(201,42,42,0.35); } to { background:transparent; } }
+  .manual-form { margin-bottom:1rem; }
+  .manual-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(11rem,1fr)); gap:0.55rem; }
+  .manual-grid label { display:flex; flex-direction:column; gap:0.25rem; font-size:0.78rem; color:var(--muted); }
+  .fills-row td { background:#0b1016; padding:0.35rem 0.7rem 0.7rem; border-bottom:1px solid var(--line); }
+  .fills-box { display:flex; flex-direction:column; gap:0.35rem; }
+  .fill-leg {
+    font-size:0.78rem; padding:0.35rem 0.55rem; border-radius:6px;
+    border:1px solid var(--line); background:#121820; font-variant-numeric:tabular-nums;
+  }
+  .fill-leg.buy { border-left:3px solid #2f9e44; }
+  .fill-leg.sell { border-left:3px solid #c92a2a; }
+  .fill-leg .mistake { color:#ffc078; margin-top:0.2rem; }
+</style>
+
+<script>
+(function () {
+  function csrfToken() {
+    var m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+    if (m) return decodeURIComponent(m[1]);
+    return '{{ csrf_token }}';
+  }
+  function outEl() { return document.getElementById('pos-out'); }
+  function money(n) {
+    if (n === null || n === undefined || Number.isNaN(Number(n))) return '—';
+    var v = Number(n);
+    return '₹' + (v > 0 ? '+' : '') + v.toFixed(2);
+  }
+  function rupee(n) {
+    if (n === null || n === undefined || Number.isNaN(Number(n))) return '—';
+    return '₹' + Number(n).toFixed(2);
+  }
+  function api(url, opts) {
+    opts = opts || {};
+    var headers = Object.assign({ 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() }, opts.headers || {});
+    return fetch(url, Object.assign({}, opts, { headers: headers, credentials: 'same-origin' }))
+      .then(function (r) { return r.json().then(function (j) { return { okHttp: r.ok, status: r.status, data: j }; }); });
+  }
+
+  var POS_FILTER = 'open';
+  var LAST_LTP = {};
+  var LIVE_TIMER = null;
+  var LIVE_MS = Math.max(5000, Math.min(120000, (Number({{ live_refresh_sec|default:10 }}) || 10) * 1000));
+
+  (function wireRefreshSec() {
+    var inp = document.getElementById('live-refresh-sec');
+    var btn = document.getElementById('btn-save-refresh');
+    if (!inp || !btn) return;
+    btn.addEventListener('click', function () {
+      var sec = Math.max(5, Math.min(120, Number(inp.value) || 10));
+      inp.value = sec;
+      api('/api/settings/live-refresh/', {
+        method: 'POST',
+        body: JSON.stringify({ live_refresh_sec: sec })
+      }).then(function (res) {
+        if (res.okHttp && res.data && res.data.ok) {
+          LIVE_MS = sec * 1000;
+          if (window.toast) toast('Refresh every ' + sec + 's');
+          if (typeof startLive === 'function') startLive();
+        } else if (window.toast) toast('Could not save refresh');
+      });
+    });
+  })();
+
+  function setPosFilter(f) {
+    POS_FILTER = f;
+    document.querySelectorAll('#pos-tabs .pos-tab').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-filter') === f);
+    });
+    document.querySelectorAll('#pos-body tr.pos-row, #pos-body tr.fills-row').forEach(function (tr) {
+      var st = tr.getAttribute('data-status');
+      var show = true;
+      if (f === 'open') show = st === 'open';
+      else if (f === 'closed') show = st === 'closed';
+      tr.style.display = show ? '' : 'none';
+    });
+  }
+
+  function suggestBadge(s) {
+    if (!s) return '—';
+    var code = s.code || '';
+    var cls = (code === 'HOLD' || code === 'TRAIL') ? 'pass' : (code === 'WAIT' ? 'age' : 'block');
+    return '<span class="badge ' + cls + '">' + (s.label || code) + '</span>'
+      + '<div class="muted sug-detail">' + (s.detail || '') + '</div>';
+  }
+
+  function renderFills(id, fills) {
+    var box = document.getElementById('fills-box-' + id);
+    if (!box || !fills) return;
+    if (!fills.length) {
+      box.innerHTML = '<span class="muted">No buy/sell legs yet</span>';
+      return;
+    }
+    box.innerHTML = fills.map(function (f) {
+      var ch = f.charges || {};
+      var html = '<div class="fill-leg ' + String(f.side).toLowerCase() + '">'
+        + '<strong>' + f.side + '</strong> @ ₹' + Number(f.price).toFixed(2)
+        + ' · ' + f.units + ' u · turn ₹' + Number(f.turnover).toFixed(2)
+        + ' · chg ₹' + Number(f.charges_total).toFixed(2)
+        + ' (brkr ' + (ch.brokerage != null ? ch.brokerage : '—')
+        + ' · STT ' + (ch.stt != null ? ch.stt : '—')
+        + ' · exch ' + (ch.exchange != null ? ch.exchange : '—')
+        + ' · GST ' + (ch.gst != null ? ch.gst : '—') + ')'
+        + ' · net ' + Number(f.net_cash_flow).toFixed(2)
+        + ' <span class="muted">· ' + (f.source || '') + ' · ' + (f.broker || 'groww') + '</span>';
+      if (f.mistake_note) html += '<div class="mistake">Mistake: ' + f.mistake_note + '</div>';
+      return html + '</div>';
+    }).join('');
+  }
+
+  function paintRow(row) {
+    var tr = document.getElementById('row-' + row.id);
+    if (!tr) return;
+    if (row.contract) {
+      var c = tr.querySelector('.contract');
+      if (c) c.textContent = row.contract;
+    }
+    var q = tr.querySelector('.qty');
+    if (q && row.qty_label) q.textContent = row.qty_label;
+    if (row.lots != null) tr.setAttribute('data-lots', row.lots);
+    else if (row.qty != null) tr.setAttribute('data-lots', row.qty);
+    if (row.entry != null) {
+      tr.setAttribute('data-entry', row.entry);
+      var en = tr.querySelector('.entry');
+      if (en) en.textContent = Number(row.entry).toFixed(2);
+    }
+    if (row.stop != null) {
+      tr.setAttribute('data-stop', row.stop);
+      var st = tr.querySelector('.stop');
+      if (st) st.textContent = Number(row.stop).toFixed(2);
+    }
+    if (row.target != null) {
+      tr.setAttribute('data-target', row.target);
+      var tg = tr.querySelector('.target');
+      if (tg) tg.textContent = Number(row.target).toFixed(2);
+    }
+    var ltpEl = tr.querySelector('.ltp');
+    if (ltpEl && row.ltp != null) {
+      var prev = LAST_LTP[row.id];
+      var next = Number(row.ltp);
+      ltpEl.textContent = next.toFixed(2);
+      if (prev != null && prev !== next) {
+        ltpEl.classList.remove('flash-up', 'flash-down');
+        void ltpEl.offsetWidth;
+        ltpEl.classList.add(next > prev ? 'flash-up' : 'flash-down');
+      }
+      LAST_LTP[row.id] = next;
+    }
+    var inv = tr.querySelector('.invested');
+    if (inv && row.invested != null) inv.textContent = rupee(row.invested);
+    var cur = tr.querySelector('.current');
+    if (cur && row.current_value != null) cur.textContent = rupee(row.current_value);
+    var pnl = tr.querySelector('.pnl');
+    if (pnl && row.status === 'open' && row.open_pnl != null) {
+      var cls = row.open_pnl >= 0 ? 'pnl-up' : 'pnl-down';
+      var html = '<span class="' + cls + '">' + money(row.open_pnl) + '</span>';
+      if (row.open_pnl_net != null) {
+        html += '<div class="pnl-pct">net ' + Number(row.open_pnl_net).toFixed(2) + '</div>';
+      }
+      if (row.pnl_pct != null) {
+        html += '<div class="pnl-pct ' + cls + '">' + (row.pnl_pct > 0 ? '+' : '') + Number(row.pnl_pct).toFixed(2) + '%</div>';
+      }
+      pnl.innerHTML = html;
+    }
+    var sug = tr.querySelector('.suggest');
+    if (sug && row.status === 'open') sug.innerHTML = suggestBadge(row.suggestion);
+    var exit = document.getElementById('exit-' + row.id);
+    if (exit && row.ltp != null && document.activeElement !== exit) exit.value = Number(row.ltp).toFixed(2);
+    var reason = document.getElementById('reason-' + row.id);
+    if (reason && row.suggestion) {
+      if (row.suggestion.code === 'TAKE_PROFIT') reason.value = 'target';
+      else if (row.suggestion.code === 'HIT_STOP') reason.value = 'stop';
+    }
+    if (row.fills) renderFills(row.id, row.fills);
+  }
+
+  function applyLiveSnapshot(data) {
+    if (!data || !data.ok) return;
+    (data.rows || []).forEach(paintRow);
+    var invested = 0, current = 0, netOpen = 0, grossOpen = 0;
+    (data.rows || []).forEach(function (r) {
+      if (r.status === 'closed') return;
+      if (r.is_dummy) return;
+      if (r.invested != null) invested += Number(r.invested);
+      if (r.current_value != null) current += Number(r.current_value);
+      if (r.open_pnl != null) grossOpen += Number(r.open_pnl);
+      if (r.open_pnl_net != null) netOpen += Number(r.open_pnl_net);
+    });
+    var openGross = data.open_pnl_total != null ? Number(data.open_pnl_total) : grossOpen;
+    var openNet = data.open_pnl_net_total != null ? Number(data.open_pnl_net_total) : netOpen;
+    var todayGross = data.today_pnl_gross != null
+      ? Number(data.today_pnl_gross)
+      : (openGross + Number(data.closed_today_gross || 0));
+    var todayNet = data.today_pnl_net != null
+      ? Number(data.today_pnl_net)
+      : (openNet + Number(data.closed_today_net || 0));
+    var si = document.getElementById('sum-invested');
+    if (si) si.textContent = rupee(invested);
+    var sc = document.getElementById('sum-current');
+    if (sc) sc.textContent = rupee(current);
+    var oo = document.getElementById('sum-open-only-pnl');
+    if (oo) {
+      oo.textContent = money(openGross);
+      oo.className = openGross > 0 ? 'pnl-up' : (openGross < 0 ? 'pnl-down' : '');
+    }
+    var oon = document.getElementById('sum-open-only-pnl-net');
+    if (oon) {
+      oon.textContent = money(openNet);
+      oon.className = openNet > 0 ? 'pnl-up' : (openNet < 0 ? 'pnl-down' : '');
+    }
+    var op = document.getElementById('sum-today-pnl');
+    if (op) {
+      op.textContent = money(todayGross);
+      op.className = todayGross > 0 ? 'pnl-up' : (todayGross < 0 ? 'pnl-down' : '');
+    }
+    var opn = document.getElementById('sum-today-pnl-net');
+    if (opn) {
+      opn.textContent = money(todayNet);
+      opn.className = todayNet > 0 ? 'pnl-up' : (todayNet < 0 ? 'pnl-down' : '');
+    }
+    // Keep day-book header in sync on live refresh (only when viewing today)
+    var dayBookIsToday = {{ day_book_is_today|yesno:"true,false" }};
+    var dg = document.getElementById('day-gross');
+    var dn = document.getElementById('day-net');
+    if (dayBookIsToday && dg && data.today_pnl_gross != null) {
+      dg.textContent = '₹' + Number(data.today_pnl_gross).toFixed(2);
+      dg.className = data.today_pnl_gross >= 0 ? 'pnl-up' : 'pnl-down';
+    }
+    if (dayBookIsToday && dn && data.today_pnl_net != null) {
+      dn.innerHTML = '<strong>₹' + Number(data.today_pnl_net).toFixed(2) + '</strong>';
+      dn.className = data.today_pnl_net >= 0 ? 'pnl-up' : 'pnl-down';
+    }
+    var cashEl = document.getElementById('sum-cash');
+    if (cashEl && data.cash != null) cashEl.textContent = rupee(data.cash);
+    var em = document.getElementById('sum-equity-mark');
+    if (em) em.textContent = rupee(data.equity_mark);
+    var asof = document.getElementById('live-asof');
+    if (asof) asof.textContent = data.as_of || '—';
+    var tr = document.getElementById('live-transport');
+    if (tr) tr.textContent = 'live · every ' + Math.round(LIVE_MS / 1000) + 's · ' + ((data.underlyings_fetched || []).length) + ' und.';
+    setPosFilter(POS_FILTER);
+  }
+
+  function pollLive() {
+    var tr = document.getElementById('live-transport');
+    return fetch('/api/positions/live/?refresh=1', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        applyLiveSnapshot(data);
+        return data;
+      })
+      .catch(function () {
+        if (tr) tr.textContent = 'live retry…';
+      });
+  }
+
+  function stopLive() {
+    if (LIVE_TIMER) {
+      clearInterval(LIVE_TIMER);
+      LIVE_TIMER = null;
+    }
+    var tr = document.getElementById('live-transport');
+    if (tr) tr.textContent = 'paused (tab hidden)';
+  }
+
+  function startLive() {
+    // Realtime only while this Positions page is open AND visible
+    if (document.hidden) {
+      stopLive();
+      return;
+    }
+    pollLive();
+    if (LIVE_TIMER) clearInterval(LIVE_TIMER);
+    LIVE_TIMER = setInterval(function () {
+      if (document.hidden) {
+        stopLive();
+        return;
+      }
+      pollLive();
+    }, LIVE_MS);
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stopLive();
+    else startLive();
+  });
+
+  function closePos(id) {
+    var exitEl = document.getElementById('exit-' + id);
+    var reasonEl = document.getElementById('reason-' + id);
+    var exit = Number(exitEl && exitEl.value);
+    var reason = (reasonEl && reasonEl.value) || 'manual';
+    var exitReason = prompt(
+      'Exit reason: target | sl | manual_early | manual_late | time',
+      reason === 'target' || reason === 'stop' || reason === 'sl' ? (reason === 'stop' ? 'sl' : reason) : 'manual_early'
+    );
+    if (!exitReason) return;
+    var tagsRaw = prompt(
+      'Mistake tags (comma). Include followed_signal_correctly if clean.\n' +
+      'entered_early,entered_late,chased,ignored_sl,moved_sl_wider,exited_early,oversized,ignored_news,revenge_trade,followed_signal_correctly',
+      'followed_signal_correctly'
+    );
+    if (!tagsRaw) return;
+    var tags = tagsRaw.split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+    var note = prompt('Optional note', '') || '';
+    outEl().textContent = 'Squaring off…';
+    api('/api/positions/' + id + '/close/', {
+      method: 'POST',
+      body: JSON.stringify({
+        exit_price: exit,
+        reason: reason,
+        exit_reason: exitReason,
+        mistake_tags: tags,
+        note: note,
+      }),
+    }).then(function (res) {
+      if (res.data && res.data.ok) {
+        outEl().textContent = 'Squared off. P&L ₹' + res.data.pnl;
+        if (window.toast) toast('Closed with review');
+        setTimeout(function () { location.reload(); }, 600);
+      } else {
+        outEl().textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+      }
+    }).catch(function (e) { outEl().textContent = String(e); });
+  }
+
+  function confirmLevels(id, stop, target) {
+    api('/api/positions/' + id + '/confirm-levels/', {
+      method: 'POST',
+      body: JSON.stringify({ stop: stop, target: target }),
+    }).then(function (res) {
+      if (res.data && res.data.ok) {
+        if (window.toast) toast('Levels saved (updated in Groww)');
+        pollLive();
+      } else {
+        outEl().textContent = (res.data && res.data.error) || 'confirm failed';
+      }
+    });
+  }
+
+  var MGMT_MS = 60000;
+  var MGMT_TIMER = null;
+  function startMgmt() {
+    if (MGMT_TIMER) clearInterval(MGMT_TIMER);
+    MGMT_TIMER = setInterval(function () {
+      if (document.hidden) return;
+      document.querySelectorAll('[data-act="reanalyze"]').forEach(function (btn) {
+        var id = btn.getAttribute('data-id');
+        if (!id) return;
+        api('/api/positions/' + id + '/reanalyze/', { method: 'POST', body: '{}' }).then(function (res) {
+          if (!res.data || !res.data.ok) return;
+          var m = res.data.management;
+          if (m && res.data.action_changed && window.ssNotify) {
+            ssNotify(m.action, m.reason || '');
+          }
+          if (m && m.suggested_sl != null) {
+            var row = document.getElementById('pos-' + id) || btn.closest('tr');
+            if (row) {
+              var tip = row.querySelector('.mgmt-tip');
+              if (!tip) {
+                tip = document.createElement('div');
+                tip.className = 'mgmt-tip muted';
+                tip.style.fontSize = '0.78rem';
+                row.appendChild(tip);
+              }
+              tip.innerHTML = m.action + ' — ' + (m.reason || '') +
+                ' · SL ' + m.suggested_sl + ' / tgt ' + m.suggested_target +
+                ' <button type="button" class="btn-ghost" data-confirm-lvl="' + id + '">I updated it in Groww</button>';
+              tip.querySelector('[data-confirm-lvl]')?.addEventListener('click', function () {
+                confirmLevels(id, m.suggested_sl, m.suggested_target);
+              });
+            }
+          }
+        });
+      });
+    }, MGMT_MS);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) startMgmt();
+  });
+  startMgmt();
+
+  function deletePos(id) {
+    if (!confirm('Delete this order? Reserved cash returns to wallet (no P&L).')) return;
+    outEl().textContent = 'Deleting…';
+    api('/api/positions/' + id + '/delete/', { method: 'POST', body: '{}' }).then(function (res) {
+      if (res.data && res.data.ok) {
+        outEl().textContent = 'Deleted #' + res.data.deleted;
+        setTimeout(function () { location.reload(); }, 500);
+      } else {
+        outEl().textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+      }
+    }).catch(function (e) { outEl().textContent = String(e); });
+  }
+
+  function showEditForm(id) {
+    var tr = document.getElementById('row-' + id);
+    if (!tr) return;
+    document.getElementById('manual-form').hidden = true;
+    var form = document.getElementById('edit-form');
+    form.hidden = false;
+    document.getElementById('e-id').value = id;
+    document.getElementById('e-contract').textContent = '· ' + (tr.getAttribute('data-contract') || '');
+    document.getElementById('e-lots').value = tr.getAttribute('data-lots') || '1';
+    document.getElementById('e-entry').value = tr.getAttribute('data-entry') || tr.querySelector('.entry').textContent.trim();
+    document.getElementById('e-stop').value = tr.getAttribute('data-stop') || tr.querySelector('.stop').textContent.trim();
+    document.getElementById('e-target').value = tr.getAttribute('data-target') || tr.querySelector('.target').textContent.trim();
+    document.getElementById('e-status').textContent = '';
+    form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function hideEditForm() {
+    document.getElementById('edit-form').hidden = true;
+    document.getElementById('e-id').value = '';
+    document.getElementById('e-status').textContent = '';
+  }
+
+  function saveEdit() {
+    var id = document.getElementById('e-id').value;
+    if (!id) return;
+    var lots = Number(document.getElementById('e-lots').value);
+    var entry = Number(document.getElementById('e-entry').value);
+    var stop = Number(document.getElementById('e-stop').value);
+    var target = Number(document.getElementById('e-target').value);
+    var st = document.getElementById('e-status');
+    if (!(lots >= 1) || !isFinite(lots)) { st.textContent = 'Lots must be ≥ 1'; return; }
+    if (!(entry > 0) || !isFinite(entry)) { st.textContent = 'Entry LTP required'; return; }
+    if (!(stop > 0) || !isFinite(stop)) { st.textContent = 'Stop loss required'; return; }
+    if (!(target > 0) || !isFinite(target)) { st.textContent = 'Target required'; return; }
+    var body = {
+      qty: Math.round(lots),
+      entry_price: entry,
+      stop: stop,
+      target: target,
+    };
+    st.textContent = 'Saving…';
+    outEl().textContent = 'Saving edit…';
+    api('/api/positions/' + id + '/edit/', { method: 'POST', body: JSON.stringify(body) }).then(function (res) {
+      if (res.data && res.data.ok) {
+        var tr = document.getElementById('row-' + id);
+        if (tr) {
+          tr.setAttribute('data-lots', body.qty);
+          tr.setAttribute('data-entry', body.entry_price);
+          tr.setAttribute('data-stop', body.stop);
+          tr.setAttribute('data-target', body.target);
+          tr.querySelector('.entry').textContent = Number(body.entry_price).toFixed(2);
+          tr.querySelector('.stop').textContent = Number(body.stop).toFixed(2);
+          tr.querySelector('.target').textContent = Number(body.target).toFixed(2);
+        }
+        if (res.data.live) paintRow(res.data.live);
+        st.textContent = 'Updated.';
+        outEl().textContent = 'Updated #' + id + ' · lots ' + body.qty
+          + ' · SL ₹' + body.stop + ' · Tgt ₹' + body.target;
+        hideEditForm();
+        pollLive();
+      } else {
+        st.textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+        outEl().textContent = st.textContent;
+      }
+    }).catch(function (e) {
+      st.textContent = String(e);
+      outEl().textContent = String(e);
+    });
+  }
+
+  function editPos(id) {
+    showEditForm(id);
+  }
+
+  function formatAdvise(data) {
+    if (!data || !data.ok) return (data && data.error) || 'Advise failed';
+    var c = data.combined || {};
+    var lines = [
+      (c.headline || c.verdict || '—') + ' (conf ' + (c.confidence != null ? c.confidence : '—') + ')',
+      c.action || '',
+      'Rules: ' + ((data.rules && data.rules.verdict) || '—') + ' — ' + ((data.rules && data.rules.why) || ''),
+      'Model: ' + ((data.model && data.model.verdict) || '—') + ' — ' + ((data.model && data.model.why) || ''),
+      'AI (' + ((data.ai && data.ai.provider) || '?') + '): ' + ((data.ai && data.ai.verdict) || '—'),
+    ];
+    if (data.ai && data.ai.why) {
+      var clip = String(data.ai.why).replace(/\s+/g, ' ').trim();
+      if (clip.length > 280) clip = clip.slice(0, 280) + '…';
+      lines.push(clip);
+    }
+    return lines.filter(Boolean).join('\n');
+  }
+
+  function advisePos(id) {
+    var box = document.getElementById('advise-' + id);
+    if (box) box.textContent = 'Asking advisor (local rules + model; Gemini explains)…';
+    outEl().textContent = 'Advising #' + id + '…';
+    api('/api/positions/' + id + '/advise/', { method: 'POST', body: '{}' }).then(function (res) {
+      var text = formatAdvise(res.data);
+      if (box) box.textContent = text;
+      outEl().textContent = text;
+      var c = (res.data && res.data.combined) || {};
+      if (c.verdict === 'SELL') {
+        var reason = document.getElementById('reason-' + id);
+        if (reason) reason.value = 'manual';
+      }
+    }).catch(function (e) {
+      if (box) box.textContent = String(e);
+      outEl().textContent = String(e);
+    });
+  }
+
+  function adviseAllOpen() {
+    outEl().textContent = 'Asking advisor for all open positions…';
+    var btn = document.getElementById('btn-advise-all');
+    if (btn) btn.disabled = true;
+    api('/api/positions/advise-all/', { method: 'POST', body: '{}' }).then(function (res) {
+      if (btn) btn.disabled = false;
+      if (!res.data || !res.data.ok) {
+        outEl().textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+        return;
+      }
+      var parts = [];
+      (res.data.rows || []).forEach(function (row) {
+        if (row.ok && row.position_id) {
+          var box = document.getElementById('advise-' + row.position_id);
+          var text = formatAdvise(row);
+          if (box) box.textContent = text;
+          var c = row.combined || {};
+          parts.push((row.contract || ('#' + row.position_id)) + ': ' + (c.verdict || '?')
+            + ' (conf ' + (c.confidence != null ? c.confidence : '—') + ')');
+        } else {
+          parts.push('#' + (row.position_id || '?') + ': ' + (row.error || 'failed'));
+        }
+      });
+      outEl().textContent = 'Advisor (all opens)\n' + parts.join('\n');
+    }).catch(function (e) {
+      if (btn) btn.disabled = false;
+      outEl().textContent = String(e);
+    });
+  }
+
+  function reanalyzePos(id) {
+    outEl().textContent = 'Reanalyzing…';
+    api('/api/positions/' + id + '/reanalyze/', { method: 'POST', body: '{}' }).then(function (res) {
+      if (!res.data || !res.data.ok) {
+        outEl().textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+        return;
+      }
+      if (res.data.live) paintRow(res.data.live);
+      var live = res.data.live || {};
+      var sug = live.suggestion || {};
+      var msg = (sug.label || '') + '\n' + (sug.detail || '');
+      msg += '\nLTP ₹' + (live.ltp != null ? live.ltp : '—') + ' · P&L ' + money(live.open_pnl);
+      msg += '\n' + (live.qty_label || '') + ' · invested ' + rupee(live.invested);
+      var plan = res.data.plan;
+      if (plan && plan.affordable) {
+        msg += '\n\nFresh: ' + plan.underlying + ' ' + plan.strike + ' ' + plan.option_type;
+        msg += '\nBuy ₹' + plan.buy_ltp + ' · SL ₹' + plan.sl_ltp + ' · Tgt ₹' + plan.target_ltp;
+      } else if (plan && (plan.error || plan.warning)) {
+        msg += '\n' + (plan.error || plan.warning);
+      }
+      outEl().textContent = msg;
+      pollLive();
+    }).catch(function (e) { outEl().textContent = String(e); });
+  }
+
+  function previewCharges() {
+    var entry = Number(document.getElementById('m-entry').value || 0);
+    var lot = Number(document.getElementById('m-lot').value || 1);
+    var qty = Number(document.getElementById('m-qty').value || 1);
+    var units = lot * qty;
+    var exit = document.getElementById('m-exit').value;
+    var opt = document.getElementById('m-opt').value;
+    var url = '/api/positions/charges-preview/?price=' + entry + '&units=' + units
+      + '&product=' + encodeURIComponent(document.getElementById('m-product').value)
+      + '&is_option=' + (opt ? '1' : '0');
+    if (exit) url += '&exit_price=' + encodeURIComponent(exit);
+    fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (data) {
+      var pre = document.getElementById('m-preview');
+      if (!data.ok) { pre.textContent = data.error || 'preview failed'; return; }
+      var t = 'Buy wallet debit ≈ ₹' + data.wallet_debit + '\nBuy charges: ' + JSON.stringify(data.buy);
+      if (data.round_trip) {
+        t += '\nRound-trip charges ₹' + data.round_trip.charges_total
+          + ' · gross ₹' + data.round_trip.gross_pnl
+          + ' · net ₹' + data.round_trip.net_pnl;
+      }
+      pre.textContent = t;
+    }).catch(function (e) {
+      document.getElementById('m-preview').textContent = String(e);
+    });
+  }
+
+  function submitManual() {
+    var st = document.getElementById('m-status');
+    var opt = document.getElementById('m-opt').value;
+    var lots = Number(document.getElementById('m-qty').value || 0);
+    var entry = Number(document.getElementById('m-entry').value);
+    var stop = Number(document.getElementById('m-stop').value);
+    var target = Number(document.getElementById('m-target').value);
+    if (!(lots >= 1) || !isFinite(lots)) { st.textContent = 'Lots must be ≥ 1'; return; }
+    if (!(entry > 0) || !isFinite(entry)) { st.textContent = 'Buy / entry LTP required'; return; }
+    if (!(stop > 0) || !isFinite(stop)) { st.textContent = 'Stop loss required'; return; }
+    if (!(target > 0) || !isFinite(target)) { st.textContent = 'Target required'; return; }
+    st.textContent = 'Saving…';
+    var body = {
+      symbol: document.getElementById('m-symbol').value.trim(),
+      side: document.getElementById('m-side').value,
+      product: document.getElementById('m-product').value,
+      qty: Math.round(lots),
+      lot_size: Number(document.getElementById('m-lot').value || 1),
+      entry_price: entry,
+      stop: stop,
+      target: target,
+      exit_price: document.getElementById('m-exit').value || null,
+      option_type: opt || null,
+      strike: document.getElementById('m-strike').value || null,
+      notes: document.getElementById('m-notes').value || 'manual Groww record',
+      mistake_note: document.getElementById('m-mistake').value || '',
+      is_dummy: !!(document.getElementById('m-dummy') && document.getElementById('m-dummy').checked),
+    };
+    api('/api/positions/manual-groww/', { method: 'POST', body: JSON.stringify(body) }).then(function (res) {
+      if (res.data && res.data.ok) {
+        st.textContent = 'Saved #' + res.data.position_id + ' · cash ₹' + res.data.cash;
+        setTimeout(function () { location.reload(); }, 700);
+      } else {
+        st.textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+      }
+    }).catch(function (e) { st.textContent = String(e); });
+  }
+
+  // Event wiring (no inline onclick — survives script errors less often)
+  document.getElementById('btn-advise-all').addEventListener('click', adviseAllOpen);
+  document.getElementById('btn-add-order').addEventListener('click', function () {
+    hideEditForm();
+    var el = document.getElementById('manual-form');
+    el.hidden = !el.hidden;
+    if (!el.hidden) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  document.getElementById('btn-cancel-manual').addEventListener('click', function () {
+    document.getElementById('manual-form').hidden = true;
+  });
+  document.getElementById('btn-preview-charges').addEventListener('click', previewCharges);
+  document.getElementById('btn-save-manual').addEventListener('click', submitManual);
+  document.getElementById('btn-save-edit').addEventListener('click', saveEdit);
+  document.getElementById('btn-cancel-edit').addEventListener('click', hideEditForm);
+  document.getElementById('pos-tabs').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-filter]');
+    if (!btn) return;
+    setPosFilter(btn.getAttribute('data-filter'));
+  });
+  document.getElementById('pos-body').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-act]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-act');
+    var id = btn.getAttribute('data-id');
+    if (act === 'close') closePos(id);
+    else if (act === 'delete') deletePos(id);
+    else if (act === 'edit') editPos(id);
+    else if (act === 'reanalyze') reanalyzePos(id);
+    else if (act === 'advise') advisePos(id);
+    else if (act === 'toggle-kind') toggleKind(id);
+  });
+
+  function toggleKind(id) {
+    var tr = document.getElementById('row-' + id);
+    var isDummy = tr && tr.getAttribute('data-dummy') === '1';
+    var next = isDummy ? 'original' : 'dummy';
+    var msg = isDummy
+      ? 'Mark as ORIGINAL? It will count again in wallet / Today P&L.'
+      : 'Mark as DUMMY (practice)? Excluded from wallet / Today P&L. You can switch back later.';
+    if (!confirm(msg)) return;
+    outEl().textContent = 'Updating kind…';
+    api('/api/positions/' + id + '/mark-kind/', {
+      method: 'POST',
+      body: JSON.stringify({ kind: next }),
+    }).then(function (res) {
+      if (res.data && res.data.ok) {
+        if (window.toast) toast(res.data.kind === 'dummy' ? 'Marked dummy' : 'Marked original');
+        setTimeout(function () { location.reload(); }, 400);
+      } else {
+        outEl().textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+      }
+    }).catch(function (e) { outEl().textContent = String(e); });
+  }
+
+  setPosFilter('open');
+  try {
+    var bootNode = document.getElementById('boot-live-snap');
+    if (bootNode) {
+      var boot = JSON.parse(bootNode.textContent);
+      if (boot && boot.ok) applyLiveSnapshot(boot);
+    }
+  } catch (e) {}
+  startLive();
+  window.addEventListener('beforeunload', stopLive);
+  window.addEventListener('pagehide', stopLive);
+})();
+</script>
+{% endblock %}

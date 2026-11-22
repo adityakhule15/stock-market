@@ -1,0 +1,280 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Advisor — StockScope{% endblock %}
+{% block content %}
+<h1>Advisor</h1>
+<p class="muted">
+  Guided F&amp;O ticket builder <strong>or</strong> free chat.
+  Signals only — you place every order in Groww.
+  Wallet ₹{{ wallet_amount }}.
+</p>
+
+<div class="tab-row" role="tablist">
+  <button type="button" class="tab active" id="tab-guided" onclick="setMode('guided')">Guided</button>
+  <button type="button" class="tab" id="tab-ai" onclick="setMode('ai')">Free chat</button>
+</div>
+<p id="ai-status" class="muted" style="font-size:0.82rem;margin:0 0 0.75rem"></p>
+
+<div id="panel-guided" class="card advisor-shell">
+  <div id="chat-log" class="chat-log"></div>
+  <div id="live-strip" class="live-strip" hidden></div>
+  <div id="choices" class="choice-row"></div>
+  <div class="row strike-row" id="strike-row" hidden>
+    <input id="strike-input" type="number" step="50" placeholder="Strike e.g. 400" />
+    <input id="ltp-input" type="number" step="0.05" placeholder="Groww LTP e.g. 5.00" />
+    <button type="button" id="strike-btn">Use strike + LTP</button>
+  </div>
+  <div class="row" id="ltp-only-row" hidden>
+    <input id="ltp-only-input" type="number" step="0.05" placeholder="Paste Groww LTP" />
+    <button type="button" id="ltp-only-btn">Confirm Groww LTP</button>
+  </div>
+  <div class="row" style="margin-top:0.75rem">
+    <button type="button" id="restart-btn" style="background:#495057;color:#fff">Restart guided</button>
+    <span id="adv-wallet" class="muted"></span>
+  </div>
+</div>
+
+<div id="panel-ai" class="card advisor-shell" hidden>
+  <div id="ai-log" class="chat-log"></div>
+  <div class="ai-compose">
+    <textarea id="ai-input" rows="2" placeholder="Ask anything: NIFTY CALL ideas, should I trade today, SL rules…"></textarea>
+    <button type="button" id="ai-send">Send</button>
+  </div>
+  <div class="row" style="margin-top:0.5rem;gap:0.4rem;flex-wrap:wrap">
+    <button type="button" class="chip-btn" data-q="What should I purchase for tomorrow?">Buy for tomorrow</button>
+    <button type="button" class="chip-btn" data-q="Should I HOLD or SELL my open positions?">Hold or sell opens?</button>
+    <button type="button" class="chip-btn" data-q="Should I trade today with my ₹2000 wallet?">Trade today?</button>
+    <button type="button" class="chip-btn" data-q="Suggest a NIFTY CALL plan that fits my wallet">NIFTY CALL</button>
+    <button type="button" class="chip-btn" data-q="How should I trail my stop loss?">Trail SL</button>
+    <button type="button" class="chip-btn" data-q="When is best trade no trade?">No-trade day</button>
+    <button type="button" id="ai-clear" style="background:#495057;color:#fff">Clear chat</button>
+    <span id="ai-provider" class="muted"></span>
+  </div>
+</div>
+
+<style>
+  .tab-row { display:flex; gap:0.4rem; margin-bottom:0.65rem; }
+  .tab {
+    background:#343a40; color:#dee2e6; border:1px solid #495057;
+    padding:0.4rem 0.9rem; cursor:pointer; border-radius:4px; font-weight:600;
+  }
+  .tab.active { background:var(--accent,#5b8def); color:#041018; border-color:transparent; }
+  .advisor-shell { max-width: 720px; min-height: 420px; display:flex; flex-direction:column; }
+  .chat-log { flex:1; display:flex; flex-direction:column; gap:0.55rem; margin-bottom:0.85rem; max-height:420px; overflow:auto; }
+  .bubble { padding:0.65rem 0.8rem; border-radius:10px; max-width:92%; white-space:pre-wrap; line-height:1.35; font-size:0.92rem; }
+  .bubble.bot { background:#243041; align-self:flex-start; }
+  .bubble.user { background:#2f9e44; color:#fff; align-self:flex-end; }
+  .bubble.verdict-BUY { border:1px solid #2f9e44; }
+  .bubble.verdict-SKIP { border:1px solid #c92a2a; }
+  .bubble.typing { opacity:0.7; font-style:italic; }
+  .choice-row { display:flex; flex-wrap:wrap; gap:0.45rem; }
+  .choice-row button { background:#343a40; color:#e9ecef; }
+  .choice-row button.fit { background:#2f9e44; color:#fff; }
+  .choice-row button.nofit { background:#495057; color:#adb5bd; }
+  .live-strip { margin-bottom:0.75rem; overflow:auto; }
+  .live-strip table { font-size:0.8rem; }
+  .live-strip .fit td { color:#69db7c; }
+  .strike-row { margin-top:0.5rem; }
+  .ai-compose { display:flex; gap:0.5rem; align-items:flex-end; }
+  .ai-compose textarea {
+    flex:1; min-height:2.6rem; resize:vertical;
+    background:#0f1419; color:var(--text,#e8eef6); border:1px solid var(--line,#243041);
+    border-radius:6px; padding:0.5rem 0.65rem; font:inherit;
+  }
+  .chip-btn {
+    background:#243041; color:#c5d0de; border:1px solid var(--line,#243041);
+    border-radius:999px; padding:0.25rem 0.65rem; font-size:0.78rem; cursor:pointer;
+  }
+</style>
+
+<script>
+let answers = {};
+let aiHistory = [];
+const csrf = '{{ csrf_token }}';
+const AI_BOOT = {{ ai_status_json|default:'{}'|safe }};
+
+function addBubble(logId, text, who, extraClass) {
+  const log = document.getElementById(logId);
+  const d = document.createElement('div');
+  d.className = 'bubble ' + who + (extraClass ? ' ' + extraClass : '');
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+
+function setWallet(w) {
+  if (!w) return;
+  const el = document.getElementById('adv-wallet');
+  if (el) el.textContent = 'Wallet ₹' + w.wallet + ' (cap ₹' + w.hard_cap + ')';
+}
+
+function showAiStatus(st) {
+  const el = document.getElementById('ai-status');
+  const pv = document.getElementById('ai-provider');
+  if (!st) return;
+  if (el) el.textContent = st.free_hint || ('AI: ' + (st.active || 'local'));
+  if (pv) pv.textContent = 'provider: ' + (st.active || 'local');
+}
+
+function setMode(mode) {
+  const guided = mode === 'guided';
+  document.getElementById('panel-guided').hidden = !guided;
+  document.getElementById('panel-ai').hidden = guided;
+  document.getElementById('tab-guided').classList.toggle('active', guided);
+  document.getElementById('tab-ai').classList.toggle('active', !guided);
+  try { sessionStorage.setItem('ss_adv_mode', mode); } catch (e) {}
+}
+
+function renderLive(live) {
+  const box = document.getElementById('live-strip');
+  if (!live || live.error) { box.hidden = true; box.innerHTML=''; return; }
+  if (live.empty_reason && !(live.rows||[]).length) {
+    box.innerHTML = '<p class="muted" style="margin:0;font-size:0.9rem">' + live.empty_reason + '</p>';
+    box.hidden = false;
+    return;
+  }
+  if (!live.rows) { box.hidden = true; box.innerHTML=''; return; }
+  let html = '<p class="muted" style="margin:0 0 0.35rem;font-size:0.8rem">Top ' +
+    (live.top_n||5) + ' wallet-fit · scored (profit·risk·duration·wallet) · ' +
+    (live.expiry||'') + ' · spot ₹' + live.spot + ' · max LTP ₹' + live.max_ltp +
+    ' · 1 lot ≤ ₹' + (live.max_debit||'') +
+    ' · ' + (live.as_of||'') +
+    '</p><table><tr><th>#</th><th>Score</th><th>Strike</th><th>LTP</th><th>Debit</th><th>+₹ / risk</th><th></th></tr>';
+  live.rows.forEach(r => {
+    const m = r.rank_meta || {};
+    html += '<tr class="fit"><td>#' + (r.rank_place||'') + '</td><td><strong>' + (r.combo_score||m.score||'') +
+      '</strong></td><td>' + r.strike + '</td><td>₹' + r.ltp +
+      '</td><td>₹' + r.debit + '</td><td>+₹' + (m.profit_rs||'—') + ' / ₹' + (m.loss_rs||'—') +
+      '</td><td><button type="button" class="pick-strike" data-strike="'+r.strike+'">Select</button></td></tr>';
+  });
+  html += '</table>';
+  box.innerHTML = html;
+  box.hidden = false;
+  box.querySelectorAll('.pick-strike').forEach(btn => {
+    btn.onclick = () => {
+      addBubble('chat-log', 'Strike ' + btn.getAttribute('data-strike'), 'user');
+      sendTurn(null, Number(btn.getAttribute('data-strike')), null);
+    };
+  });
+}
+
+function renderPrompt(prompt, suggestion) {
+  const row = document.getElementById('choices');
+  const strikeRow = document.getElementById('strike-row');
+  const ltpOnly = document.getElementById('ltp-only-row');
+  row.innerHTML = '';
+  strikeRow.hidden = !(prompt && prompt.pick_strike);
+  ltpOnly.hidden = !(prompt && prompt.id === 'groww_ltp');
+  if (!prompt) return;
+  (prompt.choices || []).forEach(c => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = c.label;
+    b.onclick = () => {
+      if (c.id === 'restart') { startChat(); return; }
+      addBubble('chat-log', c.label, 'user');
+      sendTurn(c.id, null, null);
+    };
+    row.appendChild(b);
+  });
+}
+
+async function sendTurn(choiceId, strike, growwLtp) {
+  const body = { answers, choice_id: choiceId, strike, groww_ltp: growwLtp };
+  const resp = await fetch('/api/advisor/chat/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (!data.ok && data.bot) { addBubble('chat-log', data.bot, 'bot'); return; }
+  answers = data.answers || answers;
+  setWallet(data.wallet);
+  if (data.bot) {
+    const v = data.suggestion && data.suggestion.verdict;
+    addBubble('chat-log', data.bot.replaceAll('**',''), 'bot', v ? ('verdict-' + v) : '');
+  }
+  renderLive(data.live);
+  renderPrompt(data.prompt, data.suggestion);
+}
+
+async function startChat() {
+  answers = {};
+  document.getElementById('chat-log').innerHTML = '';
+  document.getElementById('live-strip').hidden = true;
+  const resp = await fetch('/api/advisor/start/', { method: 'POST', headers: { 'X-CSRFToken': csrf } });
+  const data = await resp.json();
+  answers = data.answers || {};
+  setWallet(data.wallet);
+  addBubble('chat-log', data.bot, 'bot');
+  renderPrompt(data.prompt);
+}
+
+async function sendAi(text) {
+  const msg = (text || '').trim();
+  if (!msg) return;
+  addBubble('ai-log', msg, 'user');
+  const typing = addBubble('ai-log', 'Thinking…', 'bot', 'typing');
+  document.getElementById('ai-input').value = '';
+  try {
+    const resp = await fetch('/api/advisor/ai-chat/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+      body: JSON.stringify({ message: msg, history: aiHistory }),
+    });
+    const data = await resp.json();
+    typing.remove();
+    const bot = (data.bot || data.error || 'No reply').replaceAll('**', '');
+    addBubble('ai-log', bot, 'bot');
+    aiHistory.push({ role: 'user', content: msg });
+    aiHistory.push({ role: 'assistant', content: bot });
+    if (aiHistory.length > 24) aiHistory = aiHistory.slice(-24);
+    setWallet(data.wallet);
+    showAiStatus(data.status || { active: data.provider });
+    if (window.toast) toast('Advisor replied (' + (data.provider || 'ai') + ')');
+  } catch (e) {
+    typing.remove();
+    addBubble('ai-log', String(e), 'bot');
+  }
+}
+
+document.getElementById('restart-btn').onclick = startChat;
+document.getElementById('strike-btn').onclick = () => {
+  const v = Number(document.getElementById('strike-input').value);
+  const ltp = Number(document.getElementById('ltp-input').value);
+  if (!v) return;
+  addBubble('chat-log', 'Strike ' + v + (ltp ? (' @ Groww ₹' + ltp) : ''), 'user');
+  sendTurn(null, v, ltp || null);
+};
+document.getElementById('ltp-only-btn').onclick = () => {
+  const ltp = Number(document.getElementById('ltp-only-input').value);
+  if (!ltp) return;
+  addBubble('chat-log', 'Groww LTP ₹' + ltp, 'user');
+  sendTurn(null, null, ltp);
+};
+document.getElementById('ai-send').onclick = () => sendAi(document.getElementById('ai-input').value);
+document.getElementById('ai-input').addEventListener('keydown', function (ev) {
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendAi(this.value); }
+});
+document.getElementById('ai-clear').onclick = () => {
+  aiHistory = [];
+  document.getElementById('ai-log').innerHTML = '';
+  addBubble('ai-log', 'Chat cleared. Ask about setups, sizing, or whether to skip today.', 'bot');
+};
+document.querySelectorAll('.chip-btn').forEach(function (b) {
+  b.onclick = function () { sendAi(b.getAttribute('data-q')); };
+});
+
+showAiStatus(typeof AI_BOOT === 'object' ? AI_BOOT : null);
+try {
+  const m = sessionStorage.getItem('ss_adv_mode');
+  if (m === 'ai') setMode('ai');
+} catch (e) {}
+startChat();
+addBubble('ai-log',
+  'Free chat ready. I coach with your wallet rules — I never place Groww orders.\n' +
+  (AI_BOOT && AI_BOOT.free_hint ? AI_BOOT.free_hint : ''),
+  'bot'
+);
+</script>
+{% endblock %}

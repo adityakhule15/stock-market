@@ -1,0 +1,39 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Models — StockScope{% endblock %}
+{% block content %}
+<h1>Model registry</h1>
+<table>
+  <thead><tr><th>Name</th><th>Ver</th><th>Status</th><th>Algo</th><th>Expectancy R</th><th>Brier</th><th>Signals</th></tr></thead>
+  <tbody>
+  {% for m in models %}
+    <tr>
+      <td>{{ m.name }}</td>
+      <td>{{ m.version }}</td>
+      <td>{{ m.status }}</td>
+      <td>{{ m.algo }}</td>
+      <td>{{ m.metrics.expectancy_R }}</td>
+      <td>{{ m.metrics.brier }}</td>
+      <td>{{ m.metrics.n_signals }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="7" class="muted">No models. Run <code>python manage.py train --mode swing</code></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2 style="margin-top:2rem">Recent drift</h2>
+<table>
+  <thead><tr><th>When</th><th>Model</th><th>PSI max</th><th>Retrain?</th></tr></thead>
+  <tbody>
+  {% for d in drifts %}
+    <tr>
+      <td>{{ d.created_at }}</td>
+      <td>{{ d.model_name }}</td>
+      <td>{{ d.psi_max|floatformat:3 }}</td>
+      <td>{{ d.triggered_retrain }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="4" class="muted">No drift reports.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

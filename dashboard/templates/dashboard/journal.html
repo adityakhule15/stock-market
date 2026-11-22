@@ -1,0 +1,128 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Journal — StockScope{% endblock %}
+{% block content %}
+<h1>Journal</h1>
+<p class="muted">Closed trades + forced reviews. <a href="{% url 'journal_weekly' %}">Weekly review</a>
+ · <a href="{% url 'journal_export_csv' %}">Export CSV</a></p>
+
+<form class="row" method="get" action="{% url 'journal' %}" style="margin-bottom:1rem;gap:0.75rem">
+  <label class="muted">Day book date
+    <input type="date" name="day" value="{{ day_book_date }}" />
+  </label>
+  <button type="submit">Show</button>
+  <button type="button" id="btn-retrain" title="Retrain LightGBM + meta filter on data till today">Retrain now</button>
+  <span id="retrain-status" class="muted"></span>
+</form>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin:0 0 0.5rem">Day book — {{ day_book_date }}</h3>
+  <p class="muted" style="margin:0 0 0.75rem;font-size:0.88rem">
+    Gross before charges · charges deducted · net you keep. Closed trades only for day totals.
+  </p>
+  <div class="kv" style="margin-bottom:0.85rem">
+    <span>Trades</span><span>{{ day_book.totals.closed_count }} closed · {{ day_book.totals.open_count }} open</span>
+    <span>P&amp;L (gross) · all day</span><span class="{% if day_book.totals.gross_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ day_book.totals.gross_pnl }}</span>
+    <span>Charges</span><span>₹{{ day_book.totals.charges_total }}</span>
+    <span>P&amp;L (net chg) · all day</span><span class="{% if day_book.totals.net_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}"><strong>₹{{ day_book.totals.net_pnl }}</strong></span>
+  </div>
+  <p class="muted" style="margin:0 0 0.75rem;font-size:0.82rem">
+    Closed ₹{{ day_book.totals.closed_gross_pnl }} / ₹{{ day_book.totals.closed_net_pnl }}
+    · Open MTM ₹{{ day_book.totals.open_gross_pnl }} / ₹{{ day_book.totals.open_net_pnl }}
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>When</th><th>Contract</th><th>Side</th><th>Entry / Exit</th>
+        <th>Gross</th><th>Charges</th><th>Net</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in day_book.closed %}
+      <tr>
+        <td>{{ r.closed_at|default:r.opened_at|truncatechars:19 }}</td>
+        <td>{{ r.contract }}{% if r.is_dummy %} <span class="badge warn">DUMMY</span>{% endif %}</td>
+        <td>{{ r.side }} · {{ r.product }}</td>
+        <td>₹{{ r.entry_price }}{% if r.exit_price != None %} → ₹{{ r.exit_price }}{% endif %}</td>
+        <td class="{% if r.gross_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.gross_pnl }}</td>
+        <td>₹{{ r.charges_total }}</td>
+        <td class="{% if r.net_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.net_pnl }}</td>
+        <td>closed{% if r.is_dummy %} · dummy{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8" class="muted">No closed trades this date.</td></tr>
+      {% endfor %}
+      {% for r in day_book.open_activity %}
+      <tr>
+        <td>{{ r.opened_at|truncatechars:19 }}</td>
+        <td>{{ r.contract }}</td>
+        <td>{{ r.side }} · {{ r.product }}</td>
+        <td>₹{{ r.entry_price }}</td>
+        <td class="{% if r.gross_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.gross_pnl }}</td>
+        <td>₹{{ r.charges_total }}</td>
+        <td class="{% if r.net_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.net_pnl }}</td>
+        <td>open</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <div class="kv">
+    <span>Discipline score</span><span>{% if discipline.score != None %}{{ discipline.score }}%{% else %}—{% endif %}</span>
+    <span>Sample</span><span>n={{ discipline.n }} {% if discipline.warning %}<em class="muted">{{ discipline.warning }}</em>{% endif %}</span>
+  </div>
+  {% if top_mistakes %}
+  <p class="muted" style="margin:0.5rem 0 0">Top mistakes:
+    {% for t,n in top_mistakes %}<span class="badge warn">{{ t }} ×{{ n }}</span> {% endfor %}
+  </p>
+  {% endif %}
+</div>
+
+<h2 style="font-size:1.05rem;margin:0 0 0.5rem">Reviews{% if day_book_date %} ({{ day_book_date }}){% endif %}</h2>
+<table>
+  <thead><tr><th>When</th><th>Symbol</th><th>Exit</th><th>Tags</th><th>Plan?</th><th>P&amp;L</th></tr></thead>
+  <tbody>
+  {% for r in reviews %}
+    <tr>
+      <td>{{ r.created_at|date:"d-M H:i" }}</td>
+      <td>{{ r.position.instrument.symbol }}</td>
+      <td>{{ r.exit_reason }}</td>
+      <td>{{ r.mistake_tags|join:", " }}</td>
+      <td>{% if r.followed_plan %}yes{% else %}no{% endif %}</td>
+      <td class="{% if r.position.pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.position.pnl }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="muted">No reviews yet — close a position with the review form.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+{% block extra_js %}
+<script>
+(function () {
+  var btn = document.getElementById('btn-retrain');
+  var st = document.getElementById('retrain-status');
+  if (!btn) return;
+  function csrf() {
+    var m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? m[1] : '';
+  }
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    st.textContent = 'Training…';
+    fetch('/api/journal/retrain/', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+      body: '{}'
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      st.textContent = d.ok ? (d.detail || 'done') : (d.error || 'failed');
+      if (window.toast) toast(d.ok ? 'Retrain finished' : 'Retrain failed');
+    }).catch(function (e) {
+      st.textContent = String(e);
+    }).finally(function () { btn.disabled = false; });
+  });
+})();
+</script>
+{% endblock %}

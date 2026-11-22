@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}StockScope India{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --bg: #0c1014;
+      --panel: #161d26;
+      --text: #e8eef6;
+      --muted: #8a97a8;
+      --accent: #5b8def;
+      --pass: #3aa76d;
+      --block: #d64545;
+      --amber: #d4a017;
+      --line: #243041;
+      --pnl-up: #3aa76d;
+      --pnl-down: #d64545;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(900px 480px at 8% -8%, #1a2838, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      padding: 0.85rem 1.25rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(12,16,20,0.92);
+      position: sticky;
+      top: 0;
+      backdrop-filter: blur(8px);
+      z-index: 10;
+      flex-wrap: wrap;
+    }
+    header .brand { font-weight: 700; letter-spacing: 0.02em; font-size: 1.1rem; }
+    header nav { flex: 1; display: flex; flex-wrap: wrap; gap: 0.35rem 0.85rem; }
+    nav a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.92rem;
+    }
+    nav a:hover, nav a.active { color: var(--text); }
+    .wallet-bar {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.5rem 1rem;
+      padding: 0.65rem 1.25rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(22,29,38,0.95);
+      font-size: 0.88rem;
+    }
+    .wallet-bar .big { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
+    .wallet-bar .muted { color: var(--muted); font-size: 0.78rem; }
+    .wallet-bar.survival { background: rgba(212,160,23,0.12); }
+    .wallet-bar.dead { background: rgba(214,69,69,0.18); }
+    .life-banner {
+      padding: 0.5rem 1.25rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border-bottom: 1px solid var(--line);
+    }
+    .life-banner.alive { background: rgba(58,167,109,0.12); color: var(--muted); }
+    .life-banner.survival { background: rgba(212,160,23,0.22); color: #f0c674; }
+    .life-banner.dead { background: rgba(214,69,69,0.28); color: #ff9b9b; }
+    main { padding: 1.1rem 1.25rem 3rem; max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 1.35rem; margin: 0 0 0.85rem; }
+    .muted { color: var(--muted); }
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .badge.pass { background: rgba(58,167,109,0.2); color: #7dcea0; }
+    .badge.block { background: rgba(214,69,69,0.2); color: #f5a3a3; }
+    .badge.age, .badge.wait { background: rgba(91,141,239,0.15); color: #a8c4f5; }
+    .badge.warn { background: rgba(212,160,23,0.2); color: #f0c674; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+    button, .btn {
+      background: var(--accent);
+      color: #041018;
+      border: 0;
+      border-radius: 6px;
+      padding: 0.4rem 0.7rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled, .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    input, select, textarea {
+      background: #0f1419;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.4rem 0.6rem;
+    }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem 0.75rem; font-size: 0.9rem; }
+    .kv span:nth-child(odd) { color: var(--muted); }
+    .toast {
+      position: fixed; bottom: 1.2rem; right: 1.2rem; z-index: 50;
+      background: #1e2a38; border: 1px solid var(--line); padding: 0.7rem 1rem;
+      border-radius: 8px; display: none; max-width: 320px;
+    }
+    .toast.show { display: block; }
+    .dead-screen {
+      text-align: center; padding: 3rem 1rem; max-width: 520px; margin: 2rem auto;
+    }
+    .dead-screen h1 { font-size: 1.6rem; color: #ff9b9b; }
+    details.why { margin-top: 0.6rem; font-size: 0.85rem; }
+    details.why summary { cursor: pointer; color: var(--muted); }
+    .checklist label { display: block; font-size: 0.82rem; margin: 0.25rem 0; color: var(--muted); }
+    .skeleton { background: linear-gradient(90deg,#1a222c,#243041,#1a222c); background-size: 200% 100%; animation: sk 1.2s infinite; height: 1rem; border-radius: 4px; }
+    @keyframes sk { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+    .pnl-up { color: var(--pnl-up); }
+    .pnl-down { color: var(--pnl-down); }
+    @media (max-width: 640px) {
+      header nav { width: 100%; }
+      .wallet-bar { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="life-{{ life_status|default:'alive' }}">
+  <header>
+    <div class="brand">StockScope India</div>
+    <nav>
+      <a href="{% url 'signals' %}">Today</a>
+      <a href="{% url 'advisor' %}">Advisor</a>
+      <a href="{% url 'positions' %}">Positions</a>
+      <a href="{% url 'journal' %}">Journal</a>
+      <a href="{% url 'insights' %}">Insights</a>
+      <a href="{% url 'settings' %}">Settings</a>
+    </nav>
+  </header>
+
+  <div class="wallet-bar {{ life_status|default:'alive' }}">
+    <div>
+      <div class="muted">Balance</div>
+      <div class="big">₹{{ life_equity }}</div>
+      <div class="muted">{{ wallet_pct_start|default:100 }}% of start ₹{{ wallet_start|default:wallet_cap }}</div>
+    </div>
+    <div>
+      <div class="muted">Cash / usable</div>
+      <div class="big">₹{{ wallet_amount|default:wallet_cap }}</div>
+      <div class="muted">cap ₹{{ wallet_cap }}</div>
+    </div>
+    <div>
+      <div class="muted">To SURVIVAL ₹{{ survival_equity }}</div>
+      <div class="big">{% if dist_survival >= 0 %}+{% endif %}₹{{ dist_survival|default:0 }}</div>
+    </div>
+    <div>
+      <div class="muted">To DEAD ₹{{ dead_floor }}</div>
+      <div class="big">{% if dist_dead >= 0 %}+{% endif %}₹{{ dist_dead|default:0 }}</div>
+    </div>
+    {% if market_regime %}
+    <div>
+      <div class="muted">Regime</div>
+      <div class="big" style="font-size:1rem">{{ market_regime.tag|default:"—" }}</div>
+      <div class="muted">{{ market_regime.reason|default:""|truncatechars:48 }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="life-banner {{ life_status|default:'alive' }}{% if capital_caution and life_status == 'alive' %} survival{% endif %}">
+    {% if life_status == "dead" %}
+      Wallet critical: stop trading, review your journal — reset required.
+    {% elif life_status == "survival" %}
+      SURVIVAL — stop the bleed · top-1 only · do not chase losses
+    {% elif capital_caution %}
+      CAPITAL PROTECT — down {{ drawdown_pct|default:0 }}% · skip weak tickets · no stacked losses
+      {% if fno_paused %} · F&amp;O paused until recovery{% endif %}
+    {% else %}
+      ALIVE · signals only · you place every order in Groww
+    {% endif %}
+    {% if consecutive_losses %} · {{ consecutive_losses }} loss streak{% endif %}
+    {% if lockout_active %} · LOCKOUT {{ lockout_countdown }} (cooling off){% endif %}
+    {% if kill_switch_on %} · KILL SWITCH ON{% endif %}
+    {% if force_paper %} · PAPER ONLY{% endif %}
+    {% if event_flags.warn %} · {{ event_flags.reason }}{% endif %}
+  </div>
+  {% if protect_msg %}
+  <div class="life-banner survival" style="font-weight:500">
+    {{ protect_msg }}
+  </div>
+  {% endif %}
+
+  <main>
+    {% if life_status == "dead" and not allow_dead_content %}
+    <div class="dead-screen card">
+      <h1>Wallet critical</h1>
+      <p class="muted">Equity at or below DEAD floor (₹{{ dead_floor }}). No suggestions until staff reset.</p>
+      <p><a class="btn" href="{% url 'journal' %}">Review journal</a>
+         <a class="btn" href="{% url 'settings' %}" style="margin-left:0.5rem;background:#555;color:#fff">Settings / reset</a></p>
+    </div>
+    {% else %}
+      {% block content %}{% endblock %}
+    {% endif %}
+  </main>
+  <div id="toast" class="toast"></div>
+
+  <div id="ind-token-modal" hidden style="position:fixed;inset:0;z-index:80;background:rgba(0,0,0,0.55);display:none;align-items:center;justify-content:center;padding:1rem">
+    <div class="card" style="max-width:480px;width:100%">
+      <h3 style="margin:0 0 0.5rem">INDstocks token expired</h3>
+      <p class="muted" style="margin:0 0 0.75rem;font-size:0.9rem">
+        Live LTP needs a fresh access token (~24h). Open the IndStocks page, copy the token, paste it here.
+      </p>
+      <p style="margin:0 0 0.75rem">
+        <a id="ind-token-help" href="https://www.indstocks.com/app/api-trading/access-tokens" target="_blank" rel="noopener">Get access token</a>
+      </p>
+      <textarea id="ind-token-modal-input" rows="3" style="width:100%;font-family:monospace;font-size:0.8rem" placeholder="Paste JWT access token"></textarea>
+      <div class="row" style="margin-top:0.75rem">
+        <button type="button" id="ind-token-modal-save">Save token</button>
+        <button type="button" id="ind-token-modal-dismiss" style="background:#555;color:#fff">Later</button>
+        <span id="ind-token-modal-status" class="muted"></span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toast(msg) {
+      var el = document.getElementById('toast');
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.add('show');
+      setTimeout(function(){ el.classList.remove('show'); }, 2800);
+    }
+    if ('Notification' in window && Notification.permission === 'default') {
+      try { Notification.requestPermission(); } catch (e) {}
+    }
+    window.ssNotify = function(title, body) {
+      try {
+        if (Notification.permission === 'granted') new Notification(title, { body: body });
+      } catch (e) {}
+      toast(title + (body ? ': ' + body : ''));
+    };
+
+    (function indTokenGate() {
+      function csrf() {
+        var m = document.cookie.match(/csrftoken=([^;]+)/);
+        return m ? decodeURIComponent(m[1]) : '';
+      }
+      function showModal(help) {
+        var modal = document.getElementById('ind-token-modal');
+        if (!modal) return;
+        modal.hidden = false;
+        modal.style.display = 'flex';
+        if (help) {
+          var a = document.getElementById('ind-token-help');
+          if (a) a.href = help;
+        }
+      }
+      function hideModal() {
+        var modal = document.getElementById('ind-token-modal');
+        if (!modal) return;
+        modal.hidden = true;
+        modal.style.display = 'none';
+      }
+      fetch('/api/settings/indstocks-token/', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.expired) showModal(d.help_url);
+        })
+        .catch(function () {});
+      var dismiss = document.getElementById('ind-token-modal-dismiss');
+      if (dismiss) dismiss.addEventListener('click', hideModal);
+      var save = document.getElementById('ind-token-modal-save');
+      if (save) save.addEventListener('click', function () {
+        var inp = document.getElementById('ind-token-modal-input');
+        var st = document.getElementById('ind-token-modal-status');
+        var tok = (inp && inp.value || '').trim();
+        if (st) st.textContent = 'Saving…';
+        fetch('/api/settings/indstocks-token/', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
+          body: JSON.stringify({ token: tok })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          if (d.ok) {
+            if (st) st.textContent = 'Saved';
+            if (inp) inp.value = '';
+            hideModal();
+            toast('INDstocks token saved');
+          } else if (st) {
+            st.textContent = d.error || 'Failed';
+          }
+        }).catch(function (e) {
+          if (st) st.textContent = String(e);
+        });
+      });
+    })();
+  </script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

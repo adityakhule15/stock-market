@@ -1,0 +1,16 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Weekly review — StockScope{% endblock %}
+{% block content %}
+<h1>Weekly review</h1>
+<p class="muted">Last 7 days · <a href="{% url 'journal' %}">Full journal</a></p>
+<div class="grid">
+  <div class="card"><div class="muted">P&amp;L</div><div class="big {% if total_pnl >= 0 %}pnl-up{% else %}pnl-down{% endif %}" style="font-size:1.4rem;font-weight:700">₹{{ total_pnl|floatformat:2 }}</div></div>
+  <div class="card"><div class="muted">Win rate</div><div style="font-size:1.4rem;font-weight:700">{{ win_rate|floatformat:1 }}%</div><div class="muted">{{ n_trades }} trades</div></div>
+  <div class="card"><div class="muted">Avg R</div><div style="font-size:1.4rem;font-weight:700">{{ avg_r }}</div></div>
+  <div class="card"><div class="muted">Discipline</div><div style="font-size:1.4rem;font-weight:700">{% if discipline.score != None %}{{ discipline.score }}%{% else %}—{% endif %}</div></div>
+</div>
+<h2 style="margin-top:1.5rem;font-size:1.1rem">Biggest mistake tags</h2>
+<ul>{% for t,n in top_mistakes %}<li>{{ t }} — {{ n }}</li>{% empty %}<li class="muted">None yet</li>{% endfor %}</ul>
+<h2 style="margin-top:1.25rem;font-size:1.1rem">Top 3 lessons</h2>
+<ol>{% for L in lessons %}<li>{{ L }}</li>{% endfor %}</ol>
+{% endblock %}

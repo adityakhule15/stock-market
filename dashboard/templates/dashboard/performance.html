@@ -1,0 +1,47 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Performance — StockScope{% endblock %}
+{% block content %}
+<h1>Performance</h1>
+<div class="grid">
+  <div class="card">
+    <div class="kv">
+      <span>Start capital</span><span>₹{{ start_capital }}</span>
+      <span>Equity</span><span>₹{{ equity }}</span>
+      <span>Life status</span><span>{{ life_status|upper }}</span>
+      <span>Closed trades</span><span>{{ n_trades }}</span>
+      <span>Hit rate</span><span>{{ hit_rate|floatformat:1 }}%</span>
+      <span>Total PnL</span><span>₹{{ total_pnl }}</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Go-live gates (§17)</h3>
+    <ul class="muted">
+      <li>Paper ≥ {{ paper_min }} signals &amp; net PnL &gt; 0: {% if go_live.paper_ok %}<span class="badge pass">PASS</span>{% else %}<span class="badge block">pending</span>{% endif %}</li>
+      <li>Live mode: {% if go_live.live_unlocked %}<span class="badge pass">unlocked</span>{% else %}<span class="badge block">LOCKED — paper only</span>{% endif %}</li>
+      <li>Kill switch / DEAD floor armed: yes (floor ₹{{ dead_floor }})</li>
+      <li>Manual orders only, ₹2,000 cap — local LightGBM, no Gemini</li>
+      {% if analysis %}<li>Analysis: {{ analysis.verdict }}</li>{% endif %}
+    </ul>
+  </div>
+</div>
+<div class="card" style="margin-top:1rem">
+  <div id="equity-chart" style="height:280px"></div>
+</div>
+<script>
+  const data = [
+    {% for s in snaps %}
+      { time: Math.floor(new Date('{{ s.ts|date:"c" }}').getTime()/1000), value: {{ s.equity }} },
+    {% endfor %}
+  ];
+  if (window.LightweightCharts && data.length) {
+    const chart = LightweightCharts.createChart(document.getElementById('equity-chart'), {
+      layout: { background: { color: '#1a222c' }, textColor: '#8b9bb4' },
+      grid: { vertLines: { color: '#2a3544' }, horzLines: { color: '#2a3544' } },
+      width: document.getElementById('equity-chart').clientWidth,
+      height: 280,
+    });
+    const series = chart.addLineSeries({ color: '#3d9cf0' });
+    series.setData(data);
+  }
+</script>
+{% endblock %}

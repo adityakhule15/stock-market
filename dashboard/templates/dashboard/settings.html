@@ -1,0 +1,155 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Settings — StockScope{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<p class="muted">Risk limits, live data token, and F&amp;O watchlist (always analyze these underlyings).</p>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin:0 0 0.75rem">F&amp;O watchlist</h3>
+  <p class="muted" style="margin-top:0">Select one or more underlyings. Signals → F&amp;O will analyze <strong>all selected</strong> when you click Analyze watchlist (and optionally on page load).</p>
+  <div id="fno-catalog" class="watch-grid"></div>
+  <div class="row" style="margin-top:0.9rem;gap:0.75rem">
+    <label class="row" style="gap:0.4rem">
+      <input type="checkbox" id="fno-auto" />
+      Always auto-analyze watchlist when I open Signals → F&amp;O
+    </label>
+  </div>
+  <div class="row" style="margin-top:0.75rem">
+    <button type="button" onclick="saveWatchlist()">Save F&amp;O watchlist</button>
+    <span id="wl-status" class="muted"></span>
+  </div>
+  <p class="muted" style="margin:0.6rem 0 0;font-size:0.82rem">Saved: <span id="wl-saved">—</span></p>
+</div>
+
+<div class="card">
+  <h3 style="margin:0 0 0.75rem">Risk settings</h3>
+  <div class="kv">
+    <span>Capital</span><span>₹{{ cfg.CAPITAL }}</span>
+    <span>DEAD floor</span><span>₹{{ cfg.DEAD_FLOOR }}</span>
+    <span>Survival equity</span><span>₹{{ cfg.SURVIVAL_EQUITY }}</span>
+    <span>Kill equity</span><span>₹{{ cfg.KILL_EQUITY }}</span>
+    <span>Risk / trade (alive)</span><span>{{ cfg.RISK_PER_TRADE }}</span>
+    <span>Risk / trade (survival)</span><span>{{ cfg.SURVIVAL_RISK_PER_TRADE }}</span>
+    <span>Max position</span><span>{{ cfg.MAX_POSITION_PCT }}</span>
+    <span>Max open / day trades</span><span>{{ cfg.MAX_OPEN_POSITIONS }} / {{ cfg.MAX_TRADES_PER_DAY }}</span>
+    <span>Daily / weekly loss cap</span><span>{{ cfg.DAILY_LOSS_CAP }} / {{ cfg.WEEKLY_LOSS_CAP }}</span>
+    <span>Min prob / RR</span><span>{{ cfg.MIN_PROB }} / {{ cfg.MIN_RR }}</span>
+    <span>Force paper until gates</span><span>{{ cfg.FORCE_PAPER_UNTIL_GATES }}</span>
+    <span>Intraday ORB</span><span>{{ cfg.INTRADAY_ENABLED }}</span>
+    <span>Life status</span><span>{{ portfolio.life_status }}</span>
+    <span>Kill switch</span><span>{{ portfolio.kill_switch }}</span>
+    <span>Equity / cash</span><span>₹{{ portfolio.equity }} / ₹{{ portfolio.cash }}</span>
+    <span>Broker orders</span><span>DISABLED (signals only)</span>
+    <span>INDstocks data</span><span>{% if indstocks_token %}token valid{% if indstocks_token_status.expires_at %} until {{ indstocks_token_status.expires_at }}{% endif %} ({{ indstocks_token_status.source }}){% else %}expired / missing — paste below{% endif %}</span>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h3 style="margin:0 0 0.5rem">INDstocks access token</h3>
+  <p class="muted" style="margin-top:0;font-size:0.88rem">
+    Tokens expire ~24h. Get a new one at
+    <a href="{{ indstocks_token_status.help_url|default:'https://www.indstocks.com/app/api-trading/access-tokens' }}" target="_blank" rel="noopener">access-tokens</a>,
+    paste here. Stored until JWT expiry, then cleared.
+  </p>
+  <div class="row" style="gap:0.5rem;align-items:flex-start">
+    <textarea id="ind-token-input" rows="3" style="flex:1;min-width:16rem;font-family:monospace;font-size:0.8rem" placeholder="Paste JWT access token"></textarea>
+    <button type="button" id="btn-save-ind-token">Save token</button>
+  </div>
+  <p id="ind-token-status" class="muted" style="margin:0.5rem 0 0;font-size:0.85rem"></p>
+</div>
+{% if request.user.is_staff %}
+<div class="card" style="margin-top:1rem">
+  <h3 style="margin-top:0">Staff: reset life after DEAD</h3>
+  <p class="muted">Restores alive/survival from equity. Cannot set equity ≤ DEAD floor.</p>
+  <form id="reset-life" class="row" onsubmit="event.preventDefault(); fetch('/api/portfolio/reset-life/',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':'{{ csrf_token }}'},body:JSON.stringify({equity:Number(this.equity.value),cash:Number(this.cash.value||this.equity.value)})}).then(r=>r.json()).then(d=>{alert(JSON.stringify(d)); location.reload();})">
+    <input name="equity" type="number" step="1" min="{{ cfg.DEAD_FLOOR|add:1 }}" value="{{ cfg.CAPITAL }}" placeholder="Equity" />
+    <input name="cash" type="number" step="1" value="{{ cfg.CAPITAL }}" placeholder="Cash" />
+    <button type="submit">Reset life status</button>
+  </form>
+</div>
+{% endif %}
+
+<style>
+  .watch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+    gap: 0.45rem;
+  }
+  .watch-grid label {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #121820;
+    font-size: 0.88rem;
+    cursor: pointer;
+  }
+  .watch-grid label:has(input:checked) {
+    border-color: rgba(61,156,240,0.7);
+    background: rgba(61,156,240,0.12);
+  }
+</style>
+<script>
+const CSRF = '{{ csrf_token }}';
+let CATALOG = [];
+
+async function loadWatchlist() {
+  const resp = await fetch('/api/settings/fno-watchlist/');
+  const data = await resp.json();
+  CATALOG = data.catalog || [];
+  const selected = new Set(data.watchlist || []);
+  const box = document.getElementById('fno-catalog');
+  box.innerHTML = CATALOG.map(function (c) {
+    const on = selected.has(c.id) ? ' checked' : '';
+    return '<label><input type="checkbox" value="' + c.id + '"' + on + ' /> ' + c.label + '</label>';
+  }).join('');
+  document.getElementById('fno-auto').checked = !!data.auto_analyze;
+  document.getElementById('wl-saved').textContent = (data.watchlist || []).join(', ') || '(none)';
+}
+
+async function saveWatchlist() {
+  const st = document.getElementById('wl-status');
+  const watchlist = Array.from(document.querySelectorAll('#fno-catalog input:checked')).map(function (el) {
+    return el.value;
+  });
+  st.textContent = 'Saving…';
+  const resp = await fetch('/api/settings/fno-watchlist/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({
+      watchlist: watchlist,
+      auto_analyze: document.getElementById('fno-auto').checked,
+    }),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    st.textContent = 'Saved ' + (data.watchlist || []).length + ' underlying(s)';
+    document.getElementById('wl-saved').textContent = (data.watchlist || []).join(', ') || '(none)';
+  } else {
+    st.textContent = data.error || 'Save failed';
+  }
+}
+
+loadWatchlist();
+
+document.getElementById('btn-save-ind-token').addEventListener('click', async function () {
+  const st = document.getElementById('ind-token-status');
+  const tok = (document.getElementById('ind-token-input').value || '').trim();
+  st.textContent = 'Saving…';
+  const resp = await fetch('/api/settings/indstocks-token/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({ token: tok }),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    st.textContent = 'Saved' + (data.expires_at ? ' · valid until ' + data.expires_at : '');
+    document.getElementById('ind-token-input').value = '';
+  } else {
+    st.textContent = data.error || 'Save failed';
+  }
+});
+</script>
+{% endblock %}

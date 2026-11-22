@@ -1,0 +1,9 @@
+<p style="margin:0.75rem 0 0.35rem;font-weight:600">Did you place this order?</p>
+<div class="row" style="align-items:flex-end">
+  <label class="muted" style="font-size:0.8rem">{{ fill_label|default:"Fill price" }}
+    <input id="fill-{{ sid }}" type="number" step="0.05" value="{{ fill_value|default:'' }}" style="width:6.5rem;display:block" />
+  </label>
+  <button type="button" onclick="confirmOrder({{ sid }}, true)">Yes — I placed it</button>
+  <button type="button" style="background:#495057;color:#fff" onclick="confirmOrder({{ sid }}, false)">No — skip</button>
+</div>
+<pre id="result-{{ sid }}" class="muted" style="font-size:0.75rem;white-space:pre-wrap;margin-top:0.5rem"></pre>

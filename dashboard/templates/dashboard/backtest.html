@@ -1,0 +1,21 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Backtest — StockScope{% endblock %}
+{% block content %}
+<h1>Backtest</h1>
+<form method="post" class="row" style="margin-bottom:1rem">
+  {% csrf_token %}
+  <input name="symbol" value="{{ symbol }}" placeholder="RELIANCE.NS" />
+  <button type="submit">Run</button>
+</form>
+{% if error %}<p class="badge block">{{ error }}</p>{% endif %}
+{% if result %}
+<div class="card">
+  <div class="kv">
+    <span>Trades</span><span>{{ result.trades|length }}</span>
+    <span>Hit rate</span><span>{{ result.hit_rate|floatformat:2 }}</span>
+    <span>Expectancy R</span><span>{{ result.expectancy_R|floatformat:3 }}</span>
+    <span>Max DD %</span><span>{{ result.max_drawdown_pct|floatformat:1 }}</span>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

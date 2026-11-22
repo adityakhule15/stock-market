@@ -1,0 +1,42 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Insights — StockScope{% endblock %}
+{% block content %}
+<h1>Insights</h1>
+<p class="muted">Calibration, rule stats, and advanced tools.</p>
+
+<div class="card" style="margin-bottom:1rem">
+  <h2 style="font-size:1rem;margin:0 0 0.5rem">Probability calibration</h2>
+  {% if calibration.warning %}<p class="muted">{{ calibration.warning }}</p>{% endif %}
+  <table>
+    <thead><tr><th>Bucket</th><th>n</th><th>Suggested</th><th>Actual win%</th></tr></thead>
+    <tbody>
+    {% for b in calibration.buckets %}
+      <tr><td>{{ b.prob_lo }}–{{ b.prob_hi }}</td><td>{{ b.n }}</td><td>{{ b.suggested_prob }}</td><td>{{ b.actual_win_rate }}</td></tr>
+    {% empty %}
+      <tr><td colspan="4" class="muted">Need more reviewed trades</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <h2 style="font-size:1rem;margin:0 0 0.5rem">Win rate by setup</h2>
+  <ul>
+  {% for row in rules.by_setup %}
+    <li>{{ row.key }} — {{ row.win_rate }} (n={{ row.n }})</li>
+  {% empty %}
+    <li class="muted">No data</li>
+  {% endfor %}
+  </ul>
+</div>
+
+<details class="card">
+  <summary style="cursor:pointer;font-weight:600">Advanced</summary>
+  <p class="row" style="margin-top:0.75rem">
+    <a class="btn" href="{% url 'models' %}">Models</a>
+    <a class="btn" href="{% url 'backtest' %}">Backtest</a>
+    <a class="btn" href="{% url 'blocked' %}">Blocked</a>
+    <a class="btn" href="{% url 'performance' %}">Performance</a>
+  </p>
+</details>
+{% endblock %}

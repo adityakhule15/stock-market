@@ -1,0 +1,38 @@
+# Render Blueprint — free-tier friendly single service (web + scheduler in one process)
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: stockscope-india
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python manage.py run
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: DJANGO_DEBUG
+        value: "0"
+      - key: USE_GUNICORN
+        value: "1"
+      - key: RUN_EMBEDDED_SCHEDULER
+        value: "1"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: TIMEZONE
+        value: Asia/Kolkata
+      - key: DATA_PROVIDERS
+        value: yfinance,nse_eod
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockscope-db
+          property: connectionString
+
+databases:
+  - name: stockscope-db
+    plan: free
+    databaseName: stockscope
+    user: stockscope

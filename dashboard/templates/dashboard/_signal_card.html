@@ -1,0 +1,291 @@
+{% if session_stage %}
+<div class="card session-stage" style="margin-bottom:1rem;border-color:rgba(245,159,0,0.55);background:rgba(245,159,0,0.06)">
+  <strong>{{ session_stage.stage }}</strong>
+  <span class="muted" style="font-size:0.82rem"> · {{ session_stage.now_ist }}</span>
+  <p style="margin:0.35rem 0 0;font-size:0.88rem">{{ session_stage.banner }}</p>
+  {% if session_stage.emphasize_tomorrow %}
+  <p class="muted" style="margin:0.35rem 0 0;font-size:0.82rem">
+    Prefer <strong>Buy for tomorrow</strong> above — local model ranks picks; Gemini only explains in Advisor chat.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+{% if open_positions %}
+<div class="card open-calls" style="margin-bottom:1rem;border-color:rgba(47,158,68,0.45)">
+  <strong>Your open calls</strong>
+  <span class="muted" style="font-size:0.82rem"> — always kept after you confirm; re-analyze updates SL/target on the same trade</span>
+  <ul style="margin:0.5rem 0 0;padding-left:1.1rem;font-size:0.9rem">
+    {% for p in open_positions %}
+    <li>
+      <strong>{{ p.instrument.symbol }}</strong>
+      {{ p.side }} · entry ₹{{ p.entry_price }} · SL ₹{{ p.stop }} · Tgt ₹{{ p.target }}
+      · <a href="{% url 'positions' %}">manage</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% if no_trade and not signals %}
+<div class="card" style="margin-bottom:1rem;border-color:var(--amber,#d4a017)">
+  <strong>{{ no_trade }}</strong>
+  <p class="muted" style="margin:0.35rem 0 0">
+    Sitting out is the trade. Goal: <strong>do not lose again today</strong> — wait for EDGE, not hope.
+  </p>
+</div>
+{% endif %}
+{% if signals %}
+<p class="muted" style="margin:0 0 0.75rem;font-size:0.9rem">
+  Showing <strong>{{ signals|length }}</strong> actionable idea{{ signals|length|pluralize }}
+  (Normal {{ normal_count|default:0 }} · F&amp;O {{ fno_count|default:0 }}) —
+  top {{ top_n|default:3 }} · wallet ₹{{ wallet|default:"2000" }}.
+  Only high-confidence tickets after Groww charges. Empty board beats another loss.
+</p>
+<div class="grid">
+  {% for s in signals %}
+  {% with links=s.groww fno=s.groww.fno meta=s.rank_meta %}
+  <article class="card ticket-{{ s.ticket_kind }}" id="signal-{{ s.id }}" data-kind="{{ s.ticket_kind }}">
+    <div class="score-bar">
+      <span class="rank-pill">#{{ s.rank_place|default:forloop.counter }} {% if s.ticket_kind == "fno" %}F&amp;O{% else %}Normal{% endif %}</span>
+      <span class="score-total">Score <strong>{{ meta.score|default:"—" }}</strong></span>
+      {% if meta %}
+      <span class="muted score-bits">P {{ meta.profit_score }} · R {{ meta.risk_score }} · E {{ meta.edge_score }} · D {{ meta.duration_score }} · W {{ meta.wallet_score }}</span>
+      <span class="muted score-bits">NET +₹{{ meta.profit_rs }} after charges ₹{{ meta.charges_rs|default:"—" }} (gross ₹{{ meta.gross_profit_rs|default:meta.profit_rs }}) · risk ₹{{ meta.max_loss_rs }} · RR {{ meta.rr }} · {{ meta.duration }}</span>
+      {% if meta.tip %}<div class="muted" style="font-size:0.75rem;margin-top:0.25rem">{{ meta.tip }}</div>{% endif %}
+      {% endif %}
+    </div>
+
+    {% if s.ticket_kind == "fno" %}
+    <div class="row head">
+      <div>
+        <strong>{% if fno.option_type == "PE" %}BUY PUT{% else %}BUY CALL{% endif %} {{ fno.underlying|default:s.instrument.symbol }}</strong>
+        <span class="muted tag">F&amp;O · same day</span>
+      </div>
+      <div>
+        {% if s.gate.result == "PASS" %}<span class="badge pass">READY</span>{% else %}<span class="badge block">WATCH</span>{% endif %}
+        <span class="badge age">hold → {{ fno.square_off_by_ist|default:"15:10" }} IST</span>
+      </div>
+    </div>
+    <p class="hold-line muted">Max hold: <strong>this session only</strong> · square off by {{ fno.square_off_by_ist|default:"15:10" }} IST · no overnight</p>
+    <p class="contract">{{ fno.action|default:"BUY" }} {{ fno.underlying }} {{ fno.strike|floatformat:0 }} {{ fno.option_type }} · expiry {{ fno.expiry_label }} ({{ fno.expiry_kind|default:"monthly" }})</p>
+    <p class="muted" style="font-size:0.82rem;margin:0 0 0.35rem">
+      Recommended: <strong>1 lot</strong> (= {{ fno.lot_size|default:"?" }} units)
+      {% if meta.affordable_lots %} · wallet can afford <strong>{{ meta.affordable_lots }}</strong>{% endif %}
+      · skip ATM if too expensive for wallet
+    </p>
+    {% if fno.groww_hint %}<p class="warn" style="margin:0 0 0.55rem">{{ fno.groww_hint }}</p>{% endif %}
+    <p class="muted" style="font-size:0.78rem;margin:0 0 0.45rem">
+      Pricing: <strong>{{ fno.pricing|default:"ESTIMATE" }}</strong>
+      {% if fno.live.chain_as_of %} · chain {{ fno.live.chain_as_of }}{% endif %}
+      {% if fno.live.live_volume %} · vol {{ fno.live.live_volume }}{% endif %}
+    </p>
+    <div class="levels">
+      <div><span>Buy LTP (plan)</span><b>₹{{ fno.buy_ltp|default:fno.max_premium_per_share }}</b></div>
+      <div><span>Buy debit (1 lot)</span><b>₹{{ fno.buy_debit_rs|default:fno.max_premium_budget_rs }}</b></div>
+      <div><span>Max LTP allowed</span><b>≤ ₹{{ fno.max_premium_per_share|default:"—" }}</b></div>
+      <div><span>Max debit allowed</span><b>≤ ₹{{ fno.max_premium_budget_rs|default:"2000" }}</b></div>
+      <div><span>SL sell LTP</span><b>₹{{ fno.sl_ltp|default:"—" }} (−{{ fno.sl_pct_label|default:"35" }}%)</b></div>
+      <div><span>SL lot value / loss</span><b>₹{{ fno.sl_debit_rs|default:"—" }} · loss ₹{{ fno.loss_at_sl_rs|default:s.max_loss }}</b></div>
+      <div><span>Target sell LTP</span><b>₹{{ fno.target_ltp|default:"—" }} (+{{ fno.tgt_pct_label|default:"60" }}%)</b></div>
+      <div><span>Target lot / NET profit</span><b>₹{{ fno.target_debit_rs|default:"—" }} · NET +₹{{ fno.profit_at_tgt_rs|default:"—" }}</b></div>
+      <div><span>Groww charges (round-trip)</span><b>₹{{ fno.charges_round_trip_rs|default:meta.charges_rs|default:"—" }}</b></div>
+      <div><span>Breakeven sell LTP</span><b>≥ ₹{{ fno.breakeven_sell_ltp|default:meta.breakeven_sell|default:"—" }}</b></div>
+      <div><span>Wait / enter</span><b class="hot">{{ s.wait_range|default:"next session 09:46–14:00 IST" }}</b></div>
+      <div><span>Hold / square off</span><b class="hot">{{ s.hold_until|default:"15:10 IST same day" }}</b></div>
+    </div>
+    {% else %}
+    <div class="row head">
+      <div>
+        <strong>{{ s.side }} {{ s.instrument.symbol|cut:".NS" }}</strong>
+        <span class="muted tag">Normal · {{ s.product }} · qty {{ s.qty }} · multi-day</span>
+      </div>
+      <div>
+        {% if s.gate.result == "PASS" %}<span class="badge pass">READY</span>{% else %}<span class="badge block">WATCH</span>{% endif %}
+      </div>
+    </div>
+    {% if s.ref_price %}
+    <p class="muted" style="font-size:0.82rem;margin:0 0 0.45rem">
+      Ref (last close): <strong>₹{{ s.ref_price }}</strong>
+      · entry is just above that so it matches Groww
+      · data {{ s.data_as_of_label|default:"—" }}
+    </p>
+    {% endif %}
+    <p class="hold-line muted">Hold: <strong>up to 5 trading days (CNC)</strong> · exit on SL/target · all P&amp;L shown <strong>NET of Groww charges</strong></p>
+    <div class="levels">
+      <div><span>Buy / entry trigger</span><b>{{ s.entry_trigger }}</b></div>
+      <div><span>Entry limit</span><b>{{ s.entry_limit }}</b></div>
+      <div><span>SL trigger</span><b>{{ s.sl_trigger }}</b></div>
+      <div><span>SL limit (sell)</span><b>{{ s.sl_limit }}</b></div>
+      <div><span>Target 1 / 2</span><b>{{ s.target1 }} · {{ s.target2 }}</b></div>
+      <div><span>Capital used (≈ + buy charges)</span><b>₹{{ s.capital_used }} / wallet ₹{{ s.wallet|default:"2000" }}</b></div>
+      <div><span>Max loss</span><b>₹{{ s.max_loss }}</b></div>
+      <div><span>NET profit at T1</span><b class="hot">+₹{{ meta.profit_rs|default:"—" }}</b></div>
+      <div><span>Groww charges (buy+sell)</span><b>₹{{ meta.charges_rs|default:"—" }}</b></div>
+      <div><span>Breakeven sell</span><b>≥ ₹{{ meta.breakeven_sell|default:"—" }}</b></div>
+      <div><span>Chase skip above</span><b>{{ s.chase_limit }}</b></div>
+      <div><span>Wait / enter</span><b class="hot">{{ s.wait_range|default:"next session 09:46–14:00 IST" }}</b></div>
+      <div><span>Hold until</span><b>{{ s.hold_until|default:"up to 5 trading days · SL/target" }}</b></div>
+    </div>
+    {% endif %}
+
+    <div class="row" style="gap:0.35rem;margin-bottom:0.45rem">
+      {% if s.entry_status == "triggered" %}<span class="badge pass">TRIGGERED</span>
+      {% elif s.entry_status == "expired" %}<span class="badge block">EXPIRED</span>
+      {% else %}<span class="badge wait">WAITING</span>{% endif %}
+      {% if s.gate.result == "PASS" %}<span class="badge pass">PASS</span>{% else %}<span class="badge block">BLOCK</span>{% endif %}
+      <span class="muted" style="font-size:0.78rem">conf {{ s.probability }}</span>
+      {% if s.time_machine.label %}<span class="badge warn">{{ s.time_machine.label }}</span>
+      {% elif s.time_machine.verdict %}<span class="badge age">{{ s.time_machine.verdict }}</span>{% endif %}
+    </div>
+
+    <details class="why">
+      <summary>Why this idea?</summary>
+      <ul style="margin:0.4rem 0 0;padding-left:1.1rem;color:var(--muted)">
+        <li>Scanner:
+          {% if s.pipeline.scanner.reason %}{{ s.pipeline.scanner.reason }}
+          {% elif s.reasons.setup %}{{ s.reasons.setup }}
+          {% else %}pattern/ML{% endif %}
+        </li>
+        <li>News: {% if s.pipeline.news.reason %}{{ s.pipeline.news.reason }}{% else %}no nearby results flag{% endif %}</li>
+        <li>Entry: {% if s.pipeline.entry.message %}{{ s.pipeline.entry.message }}{% else %}enter only when trigger hits{% endif %}</li>
+        <li>Exit: {% if s.pipeline.exit.reason %}{{ s.pipeline.exit.reason }}{% else %}SL/target set before entry{% endif %}</li>
+        <li>Time Machine: tgt
+          {% if s.pipeline.time_machine.p_target_pct %}{{ s.pipeline.time_machine.p_target_pct }}
+          {% elif s.time_machine.p_target_pct %}{{ s.time_machine.p_target_pct }}
+          {% else %}—{% endif %}%
+          · stop {% if s.pipeline.time_machine.p_stop_pct %}{{ s.pipeline.time_machine.p_stop_pct }}{% else %}—{% endif %}%
+          · open {% if s.pipeline.time_machine.p_neither_pct %}{{ s.pipeline.time_machine.p_neither_pct }}{% else %}—{% endif %}%
+          · n={% if s.pipeline.time_machine.n %}{{ s.pipeline.time_machine.n }}{% elif s.time_machine.n %}{{ s.time_machine.n }}{% else %}—{% endif %}
+        </li>
+        <li>Budget: {% if s.pipeline.budget.reason %}{{ s.pipeline.budget.reason }}{% elif meta.tip %}{{ meta.tip }}{% else %}sized to wallet{% endif %}</li>
+        <li>Risk gate: {% if s.pipeline.gate.reason %}{{ s.pipeline.gate.reason }}{% elif s.gate_summary %}{{ s.gate_summary }}{% else %}{{ s.gate.result }}{% endif %}</li>
+      </ul>
+    </details>
+
+    <div class="checklist" id="check-{{ s.id }}" style="margin:0.55rem 0">
+      <label><input type="checkbox" data-check="sl" onchange="toggleCopy({{ s.id }})" /> SL placed in Groww</label>
+      <label><input type="checkbox" data-check="size" onchange="toggleCopy({{ s.id }})" /> Size matches ticket</label>
+      <label><input type="checkbox" data-check="chase" onchange="toggleCopy({{ s.id }})" /> Not chasing</label>
+    </div>
+
+    <div class="action-strip">
+      <button type="button" class="btn reveal" onclick="revealTicket({{ s.id }})">Show full plan</button>
+      <button type="button" class="btn place-order {{ links.primary_class }}" id="copy-{{ s.id }}" disabled
+              onclick="copyGrowwTicket({{ s.id }}, '{{ links.order_detail }}', '{{ links.mode }}')">Copy for Groww</button>
+      <a class="btn {{ links.primary_class }} place-order" style="opacity:0.85"
+         href="{{ links.primary_url }}" target="_blank" rel="noopener noreferrer">Open Groww</a>
+    </div>
+    <textarea id="clip-{{ s.id }}" hidden>{% if s.pipeline.ticket.copy_text %}{{ s.pipeline.ticket.copy_text }}{% else %}{{ links.clipboard }}{% endif %}</textarea>
+
+    <div id="details-{{ s.id }}" class="details" hidden>
+      {% if s.ticket_kind == "fno" and fno.exit_rules %}
+      <ul class="exit-list">
+        {% for r in fno.exit_rules %}<li>{{ r }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if s.skip_reason %}
+      <p class="warn">Status: WATCH — {% if s.gate_summary %}{{ s.gate_summary }}{% else %}{{ s.skip_reason }}{% endif %}</p>
+      <p class="muted" style="font-size:0.75rem;margin:0.2rem 0 0.5rem">Use as a plan only. Prefer READY tickets after 09:46 IST.</p>
+      {% endif %}
+      <p class="place-label">Did you place this order?</p>
+      <div class="row confirm-row">
+        <label class="muted fill-label">{% if s.ticket_kind == "fno" %}Fill premium{% else %}Fill price{% endif %}
+          <input id="fill-{{ s.id }}" type="number" step="0.05" value="{% if s.ticket_kind != 'fno' %}{{ s.entry_trigger }}{% endif %}" />
+        </label>
+        <button type="button" class="btn confirm-yes" onclick="confirmOrder({{ s.id }}, true)">Yes — I placed it</button>
+        <button type="button" class="btn confirm-no" onclick="confirmOrder({{ s.id }}, false)">No — skip</button>
+      </div>
+      <pre id="result-{{ s.id }}" class="muted tip"></pre>
+    </div>
+
+  </article>
+  {% endwith %}
+  {% endfor %}
+</div>
+{% endif %}
+{% if expired_signals %}
+<details class="card" style="margin:1rem 0;border-color:rgba(134,142,150,0.45)" open>
+  <summary style="cursor:pointer;font-weight:700">
+    Expired today ({{ expired_signals|length }}) — do not enter
+  </summary>
+  <p class="muted" style="font-size:0.82rem;margin:0.4rem 0 0.6rem">
+    Entry window closed (after 14:00 IST) or session square-off. Manage opens on Positions; use Buy for tomorrow for next session.
+  </p>
+  <ul style="margin:0;padding-left:1.1rem;font-size:0.88rem">
+    {% for s in expired_signals %}
+    <li>
+      <strong>{{ s.instrument.symbol }}</strong>
+      {% if s.ticket_kind == "fno" %}F&amp;O{% else %}Normal{% endif %}
+      · <span class="badge block">EXPIRED</span>
+      · {{ s.wait_range }}
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}
+{% if signals %}
+{# Card action JS lives on parent Today page (signals.html) so HTMX swaps keep buttons working. #}
+<style>
+  .score-bar {
+    display:flex; flex-wrap:wrap; gap:0.35rem 0.65rem; align-items:center;
+    margin:0 0 0.65rem; padding:0.45rem 0.55rem;
+    background:rgba(61,156,240,0.12); border:1px solid rgba(61,156,240,0.35);
+    border-radius:8px; font-size:0.8rem;
+  }
+  .rank-pill {
+    background:#f59f00; color:#111; font-weight:800;
+    padding:0.15rem 0.45rem; border-radius:999px; font-size:0.75rem;
+  }
+  .score-total strong { color:#74c0fc; font-size:1rem; }
+  .score-bits { font-size:0.72rem; }
+  .row.head { justify-content:space-between; margin-bottom:0.35rem; align-items:flex-start; }
+  .tag { font-size:0.8rem; margin-left:0.35rem; }
+  .hold-line { margin:0 0 0.45rem; font-size:0.85rem; }
+  .hold-line strong { color:var(--text,#e7ecf3); }
+  .contract { margin:0 0 0.65rem; font-size:0.92rem; }
+  .levels {
+    display:grid; grid-template-columns:1fr 1fr; gap:0.35rem 1rem;
+    margin:0 0 0.85rem; font-size:0.86rem;
+  }
+  .levels div { display:flex; flex-direction:column; gap:0.1rem; }
+  .levels span { color:#868e96; font-size:0.75rem; }
+  .levels b { font-weight:600; color:#f1f3f5; }
+  .levels .hot { color:#ffa94d; }
+
+  .action-strip {
+    display:flex; flex-direction:column; gap:0.55rem;
+    margin-top:auto; padding-top:0.25rem;
+  }
+  .btn.reveal {
+    width:100%;
+    background:#f59f00; color:#111; font-weight:700;
+    text-align:center; padding:0.55rem 0.75rem;
+  }
+  .btn.place-order {
+    display:flex; align-items:center; justify-content:center;
+    width:100%; text-decoration:none; font-weight:700;
+    padding:0.65rem 0.75rem; border-radius:6px; min-height:2.6rem;
+  }
+  .btn.groww-buy { background:#2f9e44; color:#fff; }
+  .btn.groww-sell { background:#c92a2a; color:#fff; }
+  .btn.groww-call { background:#3d9cf0; color:#041018; }
+  .btn.groww-put { background:#ae3ec9; color:#fff; }
+
+  .details { margin-top:0.75rem; border-top:1px solid var(--line,#2a3544); padding-top:0.65rem; }
+  .exit-list { margin:0 0 0.6rem; padding-left:1.1rem; font-size:0.82rem; color:#adb5bd; }
+  .exit-list li { margin-bottom:0.25rem; }
+  .warn { font-size:0.8rem; color:#ff8787; margin:0.4rem 0; }
+  .place-label { margin:0.5rem 0 0.35rem; font-weight:600; }
+  .confirm-row { align-items:flex-end; gap:0.5rem; flex-wrap:wrap; }
+  .fill-label { font-size:0.8rem; }
+  .fill-label input { width:6.5rem; display:block; margin-top:0.2rem; }
+  .btn.confirm-yes { background:#2f9e44; color:#fff; }
+  .btn.confirm-no { background:#495057; color:#fff; }
+  .tip { font-size:0.75rem; white-space:pre-wrap; margin-top:0.45rem; }
+  .card.ticket-fno, .card.ticket-normal { display:flex; flex-direction:column; min-height:100%; }
+  @media (max-width:560px) { .levels { grid-template-columns:1fr; } }
+</style>
+{% else %}
+{% if not no_trade %}
+<p class="muted">No tickets fit your wallet. Use <strong>Scan All</strong>, <strong>Scan Normal</strong>, or <strong>Analyze F&amp;O watchlist</strong>.</p>
+{% endif %}
+{% endif %}
