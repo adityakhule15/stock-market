@@ -279,7 +279,6 @@ stock-market/
 ├── artifacts/              # Model joblib bundles
 ├── manage.py
 ├── requirements.txt
-├── render.yaml / railway.toml
 ├── README.md               ← this file
 └── STOCKSCOPE_FULL_ARCHITECTURE.md
 ```
@@ -321,12 +320,13 @@ stock-market/
 
 ---
 
-## Deploy & CI
+## Tests
 
-- Render Blueprint: [`render.yaml`](render.yaml)
-- Railway: [`railway.toml`](railway.toml)
-- CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-- Tests: `pytest` (includes **no broker orders** guarantee)
+```bash
+python -m pytest tests/ -q --tb=short
+```
+
+Includes a **no broker orders** guarantee. Run the app locally with `python manage.py run --port 8001`.
 
 ---
 

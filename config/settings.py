@@ -14,7 +14,7 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = [
     h.strip()
-    for h in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,.onrender.com,.up.railway.app").split(",")
+    for h in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
     if h.strip()
 ]
 # pytest / Django test client
@@ -24,7 +24,7 @@ CSRF_TRUSTED_ORIGINS = [
     o.strip()
     for o in os.getenv(
         "CSRF_TRUSTED_ORIGINS",
-        "http://127.0.0.1:8000,http://localhost:8000,https://*.onrender.com,https://*.up.railway.app",
+        "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8001,http://localhost:8001",
     ).split(",")
     if o.strip()
 ]
@@ -94,7 +94,7 @@ if DATABASE_URL.startswith("sqlite"):
         }
     }
 else:
-    # Render/Railway provide postgres:// or postgresql://
+    # Postgres via DATABASE_URL (postgresql://...)
     try:
         import dj_database_url
 

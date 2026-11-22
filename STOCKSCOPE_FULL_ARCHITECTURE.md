@@ -98,7 +98,6 @@ stock-market/
 ├── artifacts/              # Model joblib bundles (e.g. swing_lgbm)
 ├── manage.py
 ├── requirements.txt
-├── render.yaml / railway.toml
 └── STOCKSCOPE_FULL_ARCHITECTURE.md   ← this file
 ```
 

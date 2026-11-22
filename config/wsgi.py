@@ -6,7 +6,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 application = get_wsgi_application()
 
-# One-process deploy: start jobs alongside the web app (Render/Railway free tier)
+# One-process local/run: start jobs alongside the web app
 if os.environ.get("RUN_EMBEDDED_SCHEDULER", "1") == "1" and os.environ.get("DISABLE_SCHEDULER", "") != "1":
     try:
         from marketdata.scheduler import start_embedded

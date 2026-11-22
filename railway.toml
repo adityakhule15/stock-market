@@ -1,7 +1,0 @@
-# Optional Railway one-service deploy (same single-process model as Render)
-[build]
-builder = "NIXPACKS"
-
-[deploy]
-startCommand = "python manage.py run"
-restartPolicyType = "ON_FAILURE"
