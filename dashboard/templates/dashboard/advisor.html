@@ -33,6 +33,20 @@
   </div>
 </div>
 
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin:0 0 0.5rem">Ask the research agents</h3>
+  <p class="muted" style="font-size:0.85rem;margin:0 0 0.5rem">
+    Queues a TradingAgents ResearchRun (async). Uses LLM spend when agents are enabled in Settings.
+    For F&amp;O, analysis is on the underlying only.
+  </p>
+  <div class="row" style="gap:0.5rem;flex-wrap:wrap">
+    <input id="ta-symbol" placeholder="RELIANCE or NIFTY" style="min-width:10rem" />
+    <label class="muted row" style="gap:0.3rem"><input type="checkbox" id="ta-fno" /> F&amp;O underlying</label>
+    <button type="button" id="ta-ask">Ask the research agents</button>
+    <span id="ta-status" class="muted"></span>
+  </div>
+</div>
+
 <div id="panel-ai" class="card advisor-shell" hidden>
   <div id="ai-log" class="chat-log"></div>
   <div class="ai-compose">
@@ -264,6 +278,33 @@ document.getElementById('ai-clear').onclick = () => {
 document.querySelectorAll('.chip-btn').forEach(function (b) {
   b.onclick = function () { sendAi(b.getAttribute('data-q')); };
 });
+
+document.getElementById('ta-ask').onclick = async function () {
+  const st = document.getElementById('ta-status');
+  const symbol = (document.getElementById('ta-symbol').value || '').trim();
+  if (!symbol) { st.textContent = 'Enter a symbol'; return; }
+  st.textContent = 'Queuing research run…';
+  try {
+    const resp = await fetch('/api/research/run/', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+      body: JSON.stringify({
+        symbol: symbol,
+        fno_underlying: document.getElementById('ta-fno').checked,
+        sync: false,
+      }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      st.textContent = 'Queued #' + data.id + ' (' + data.yahoo_ticker + ') — see Journal → Agent decisions';
+    } else {
+      st.textContent = data.error || 'Failed';
+    }
+  } catch (e) {
+    st.textContent = String(e);
+  }
+};
 
 showAiStatus(typeof AI_BOOT === 'object' ? AI_BOOT : null);
 try {

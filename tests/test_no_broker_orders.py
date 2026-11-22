@@ -25,6 +25,7 @@ PKG_DIRS = (
     "timemachine",
     "backtest",
     "notifications",
+    "research",
     "scripts",
 )
 

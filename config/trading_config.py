@@ -147,6 +147,23 @@ SLIPPAGE_PCT = 0.00075
 PAPER_MIN_SIGNALS = 30
 PAPER_MIN_EXPECTANCY = 0.0
 
+# ---------------------------------------------------------------------------
+# Research agents (TradingAgents) — glue only; default OFF until backtest evidence
+# ---------------------------------------------------------------------------
+AGENTS_ENABLED = False
+AGENTS_TOP_N = 3
+AGENTS_DAILY_CALL_CAP = 6
+AGENTS_DAILY_COST_CAP_INR = 0.0  # 0 = disabled
+AGENTS_RUN_TIMEOUT_SEC = 600
+AGENTS_RETRY_BUDGET = 1
+AGENTS_MAX_DEBATE_ROUNDS = 1
+AGENTS_MAX_RISK_ROUNDS = 1
+AGENTS_SELECTED_ANALYSTS = ("market", "social", "news", "fundamentals")
+AGENTS_CHECKPOINT_ENABLED = True
+AGENTS_HOLDING_PERIOD_DAYS = 5
+AGENTS_RANK_BOOST_BUY = 4.0  # mild score bump for Buy/Overweight
+AGENTS_RANK_PENALTY_HOLD = 8.0  # lower rank when agents_neutral
+
 
 def life_status_for_equity(equity: float) -> str:
     if equity <= DEAD_FLOOR:

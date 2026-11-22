@@ -4,6 +4,50 @@
 <h1>Journal</h1>
 <p class="muted">Closed trades + forced reviews. <a href="{% url 'journal_weekly' %}">Weekly review</a>
  · <a href="{% url 'journal_export_csv' %}">Export CSV</a></p>
+<div class="row" style="gap:0.5rem;margin-bottom:1rem">
+  <a class="btn {% if journal_tab != 'agents' %}pass{% endif %}" href="?day={{ day_book_date }}&tab=day">Day book</a>
+  <a class="btn {% if journal_tab == 'agents' %}pass{% endif %}" href="?day={{ day_book_date }}&tab=agents">Agent decisions</a>
+</div>
+{% if journal_tab == 'agents' %}
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin:0 0 0.5rem">Agent decisions</h3>
+  <p class="muted" style="font-size:0.85rem;margin:0 0 0.75rem">
+    Settled TradingAgents memory reflections (alpha vs NIFTY when available).
+    Nightly settle runs after eod_ingest. No claim of improved accuracy — numbers only.
+  </p>
+  {% for e in agent_entries %}
+  <div style="border-top:1px solid var(--line);padding:0.65rem 0">
+    <strong>{{ e.header }}</strong>
+    {% if e.rating %}<span class="badge age">{{ e.rating }}</span>{% endif %}
+    {% if e.return %}<div class="muted" style="font-size:0.85rem">Return: {{ e.return }}</div>{% endif %}
+    {% if e.alpha %}<div class="muted" style="font-size:0.85rem">Alpha vs NIFTY: {{ e.alpha }}</div>{% endif %}
+    {% if e.reflection %}<p style="font-size:0.85rem;margin:0.35rem 0 0">{{ e.reflection|truncatechars:500 }}</p>
+    {% elif e.body %}<p style="font-size:0.85rem;margin:0.35rem 0 0">{{ e.body|truncatechars:500 }}</p>{% endif %}
+  </div>
+  {% empty %}
+  <p class="muted">No settled memory entries yet. Enable agents and run analyses, or wait for nightly settle.</p>
+  {% endfor %}
+</div>
+<div class="card">
+  <h3 style="margin:0 0 0.5rem">Recent research runs</h3>
+  <table>
+    <thead><tr><th>When</th><th>Symbol</th><th>Rating</th><th>Status</th><th>Report</th></tr></thead>
+    <tbody>
+    {% for r in agent_runs %}
+      <tr>
+        <td>{{ r.created_at|date:"d-M H:i" }}</td>
+        <td>{{ r.yahoo_ticker }}</td>
+        <td>{{ r.rating|default:"—" }}</td>
+        <td>{{ r.status }}</td>
+        <td>{% if r.report_html_path %}<a href="{% url 'research_report' r.id %}" target="_blank">Open</a>{% else %}—{% endif %}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="5" class="muted">No research runs yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
 
 <form class="row" method="get" action="{% url 'journal' %}" style="margin-bottom:1rem;gap:0.75rem">
   <label class="muted">Day book date
@@ -97,6 +141,7 @@
   {% endfor %}
   </tbody>
 </table>
+{% endif %}
 {% endblock %}
 {% block extra_js %}
 <script>

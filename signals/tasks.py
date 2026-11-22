@@ -410,6 +410,17 @@ def generate_signals_for_universe(symbols: list[str] | None = None) -> list[Sign
         except Exception as exc:  # noqa: BLE001
             logger.exception("Signal gen failed for %s: %s", symbol, exc)
 
+    # TradingAgents review: after LightGBM + risk_gate PASS, before ranking/UI.
+    # Fail-open; never places broker orders; never unblocks a BLOCK.
+    try:
+        from research.adapter import agents_enabled
+        from research.services import review_pass_signals
+
+        if agents_enabled() and created:
+            review_pass_signals(created)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("TradingAgents review skipped: %s", exc)
+
     # F&O is on-demand from the F&O tab (user picks underlying) — not auto-dumped here
     return created
 
@@ -625,4 +636,14 @@ def _fno_option_tickets(
                 )
         except Exception as exc:  # noqa: BLE001
             logger.info("Index F&O %s skipped: %s", name, exc)
+
+    # Agents on UNDERLYING only (direction/risk context) — strike/lot/charges untouched.
+    try:
+        from research.adapter import agents_enabled
+        from research.services import attach_underlying_research
+
+        if agents_enabled() and out:
+            attach_underlying_research(out)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("F&O underlying research skipped: %s", exc)
     return out

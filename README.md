@@ -314,6 +314,7 @@ stock-market/
 | orb_plans | 09:46 |
 | square_off_reminder | 15:10 |
 | eod_ingest | 16:00 |
+| agents_settle_memory | 16:15 (TradingAgents memory; no-op if agents OFF) |
 | nightly_retrain | 16:30 |
 | weekly_retrain | Sat 10:00 |
 | drift_check | :05 hourly |
@@ -339,11 +340,58 @@ Wallet amount shows on every page. StockScope never places broker orders.
 
 ---
 
+## Research agents (TradingAgents)
+
+Optional multi-agent research review powered by [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) **v0.7.1** (Apache-2.0). StockScope’s LightGBM + capital rules stay in charge; agents may only **veto** or flag PASS candidates (never unblock a BLOCK, never place orders).
+
+**Default: OFF** (`AGENTS_ENABLED=0`). Enable only after you accept LLM cost and have reviewed [docs/RESULTS.md](docs/RESULTS.md).
+
+### Why a separate venv?
+
+TradingAgents needs `pandas>=3`. StockScope pins `pandas<3` for Windows WDAC. Install TA into `.venv-ta` only:
+
+```powershell
+python -m venv .venv-ta
+.\.venv-ta\Scripts\python -m pip install -U pip
+.\.venv-ta\Scripts\python -m pip install -r requirements-tradingagents.txt
+```
+
+Set `TA_PYTHON=.venv-ta\Scripts\python.exe` in `.env`. Django calls `scripts/ta_runner.py` via subprocess (no pandas 3 in the app process).
+
+Docker: `docker compose --profile agents up --build` (see `docker-compose.yml`).
+
+### What is sent to the LLM
+
+Ticker, analysis date, public market/news/social tool output, optional INR cash/qty/avg from your wallet book, and memory-log lessons. **Never** INDstocks tokens, Groww credentials, or Django secrets. Set `TRADINGAGENTS_NO_UPDATE_CHECK=1` (default in `.env.example`) — update checks do not send run data.
+
+### CLI parity (sidecar)
+
+```bash
+# After .venv-ta install:
+.\.venv-ta\Scripts\tradingagents --ticker RELIANCE.NS --date 2026-11-20 --save --no-show
+.\.venv-ta\Scripts\tradingagents backtest RELIANCE.NS --start 2024-01-01 --end 2024-06-01 --every 7
+.\.venv-ta\Scripts\tradingagents login chatgpt
+python manage.py ta_backtest --tickers RELIANCE.NS --start 2024-01-01 --end 2024-06-01 --every 7
+python manage.py ta_settle_memory
+```
+
+Plan: [docs/INTEGRATION_PLAN.md](docs/INTEGRATION_PLAN.md). Third-party notice: [NOTICE](NOTICE).
+
+---
+
+## Third-party notices
+
+This project integrates **TradingAgents** by Tauric Research under the Apache License 2.0. See [NOTICE](NOTICE). Upstream source is used unchanged via the release wheel; StockScope provides Django glue only and does not place broker orders.
+
+---
+
 ## Related docs
 
 | Doc | Contents |
 |-----|----------|
 | [STOCKSCOPE_FULL_ARCHITECTURE.md](STOCKSCOPE_FULL_ARCHITECTURE.md) | Full HLD/LLD, API tables, sequences, model fields |
+| [docs/INTEGRATION_PLAN.md](docs/INTEGRATION_PLAN.md) | TradingAgents integration plan |
+| [docs/RESULTS.md](docs/RESULTS.md) | Measured agent comparison (fill after approved spend) |
 | `.env.example` | Env template |
 | `config/trading_config.py` | All capital / risk / fee constants |
 
@@ -351,4 +399,4 @@ Wallet amount shows on every page. StockScope never places broker orders.
 
 ## Disclaimer
 
-This is a **research / paper-trading helper**, not financial advice. Markets can lose money. Survival floors and “sit out” messaging exist to **protect a small wallet**, not to guarantee profits or recover losses.
+This is a **research / paper-trading helper**, not financial advice. Markets can lose money. Survival floors and “sit out” messaging exist to **protect a small wallet**, not to guarantee profits or recover losses. TradingAgents ratings are research outputs only — not investment advice and not a claim of improved accuracy.

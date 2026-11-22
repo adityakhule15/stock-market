@@ -135,7 +135,36 @@
       <span class="muted" style="font-size:0.78rem">conf {{ s.probability }}</span>
       {% if s.time_machine.label %}<span class="badge warn">{{ s.time_machine.label }}</span>
       {% elif s.time_machine.verdict %}<span class="badge age">{{ s.time_machine.verdict }}</span>{% endif %}
+      {% with ag=s.pipeline.agents %}
+      {% if ag %}
+        {% if ag.badge == "agents_bullish" %}<span class="badge pass">Agents {{ ag.final_rating|default:ag.rating|default:"Buy" }}</span>
+        {% elif ag.badge == "agents_neutral" %}<span class="badge warn">Agents neutral</span>
+        {% elif ag.badge == "agents_veto" %}<span class="badge block">Agents veto</span>
+        {% elif ag.badge == "agents_bearish_context" %}<span class="badge warn">Agents {{ ag.final_rating|default:ag.rating }} (underlying)</span>
+        {% elif ag.badge == "agents_unavailable" %}<span class="badge age">Agents unavailable</span>
+        {% elif ag.final_rating or ag.rating %}<span class="badge age">Agents {{ ag.final_rating|default:ag.rating }}</span>{% endif %}
+        {% if ag.research_run_id %}
+        <a class="badge pass" href="{% url 'research_report' ag.research_run_id %}" target="_blank" rel="noopener">View full report</a>
+        {% endif %}
+      {% endif %}
+      {% endwith %}
     </div>
+    {% with ag=s.pipeline.agents %}
+    {% if ag.final_rating or ag.summary or ag.bull_case or ag.rating or ag.badge %}
+    <details class="why" style="margin-bottom:0.45rem">
+      <summary>Research agents{% if ag.fno_underlying_only %} (underlying only){% endif %}</summary>
+      <ul style="margin:0.4rem 0 0;padding-left:1.1rem;color:var(--muted);font-size:0.85rem">
+        <li>Final rating: <strong>{{ ag.final_rating|default:ag.rating|default:"—" }}</strong></li>
+        {% if ag.summary %}<li>Summary: {{ ag.summary|truncatechars:280 }}</li>{% endif %}
+        {% if ag.bull_case %}<li>Bull: {{ ag.bull_case|truncatechars:220 }}</li>{% endif %}
+        {% if ag.bear_case %}<li>Bear: {{ ag.bear_case|truncatechars:220 }}</li>{% endif %}
+        {% if ag.key_risks %}<li>Key risks: {{ ag.key_risks|truncatechars:220 }}</li>{% endif %}
+        {% if ag.limitation %}<li class="warn">{{ ag.limitation }}</li>{% endif %}
+        {% if ag.indian_data_note %}<li>{{ ag.indian_data_note }}</li>{% endif %}
+      </ul>
+    </details>
+    {% endif %}
+    {% endwith %}
 
     <details class="why">
       <summary>Why this idea?</summary>

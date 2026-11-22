@@ -97,6 +97,26 @@ def eod_ingest():
     return f"ok={sum(1 for v in results.values() if v)}"
 
 
+def agents_settle_memory():
+    """Settle TradingAgents memory log after eod_ingest (IST nightly)."""
+    try:
+        from research.adapter import agents_enabled
+        from research.services import settle_memory
+
+        if not agents_enabled():
+            return "agents disabled"
+        result = settle_memory(wait=True)
+        if not result.get("ok"):
+            return f"error={result.get('error', 'unknown')[:120]}"
+        return (
+            f"settled={len(result.get('settled') or [])} "
+            f"failed={len(result.get('failed') or [])}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("agents_settle_memory failed")
+        return f"error={exc}"
+
+
 def nightly_retrain():
     from ml.meta_filter import maybe_promote_meta
     from ml.retrain import maybe_auto_rollback, retrain_and_maybe_promote

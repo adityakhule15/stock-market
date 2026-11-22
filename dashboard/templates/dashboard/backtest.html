@@ -2,10 +2,11 @@
 {% block title %}Backtest — StockScope{% endblock %}
 {% block content %}
 <h1>Backtest</h1>
+<p class="muted" style="margin-top:0">LightGBM historical CNC walk. Agent comparison is separate (see below).</p>
 <form method="post" class="row" style="margin-bottom:1rem">
   {% csrf_token %}
   <input name="symbol" value="{{ symbol }}" placeholder="RELIANCE.NS" />
-  <button type="submit">Run</button>
+  <button type="submit">Run LightGBM backtest</button>
 </form>
 {% if error %}<p class="badge block">{{ error }}</p>{% endif %}
 {% if result %}
@@ -16,6 +17,40 @@
     <span>Expectancy R</span><span>{{ result.expectancy_R|floatformat:3 }}</span>
     <span>Max DD %</span><span>{{ result.max_drawdown_pct|floatformat:1 }}</span>
   </div>
+</div>
+{% endif %}
+
+<div class="card" style="margin-top:1rem">
+  <h3 style="margin:0 0 0.5rem">Research agents backtest</h3>
+  <p class="muted" style="font-size:0.88rem">{{ ta_note }}</p>
+  <p class="muted" style="font-size:0.85rem">
+    Groups to report in <code>docs/RESULTS.md</code> (net of Groww charges where StockScope path applies):
+  </p>
+  <ul style="font-size:0.88rem;color:var(--muted)">
+    <li>(a) Original LightGBM + risk_gate signals</li>
+    <li>(b) Agents-only ratings (upstream grid)</li>
+    <li>(c) LightGBM + agent veto</li>
+    <li>vs NIFTY buy-and-hold</li>
+  </ul>
+  <p class="muted" style="font-size:0.82rem">Agents default OFF. Do not claim accuracy gains — only measured OOS numbers after approved spend.</p>
+</div>
+
+{% if recent_ta %}
+<div class="card" style="margin-top:1rem">
+  <h3 style="margin:0 0 0.5rem">Recent agent runs</h3>
+  <table>
+    <thead><tr><th>Date</th><th>Ticker</th><th>Rating</th><th>Report</th></tr></thead>
+    <tbody>
+    {% for r in recent_ta %}
+      <tr>
+        <td>{{ r.as_of }}</td>
+        <td>{{ r.yahoo_ticker }}</td>
+        <td>{{ r.rating|default:"—" }}</td>
+        <td>{% if r.report_html_path %}<a href="{% url 'research_report' r.id %}" target="_blank">Open</a>{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% endif %}
 {% endblock %}

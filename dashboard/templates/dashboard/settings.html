@@ -57,6 +57,52 @@
   </div>
   <p id="ind-token-status" class="muted" style="margin:0.5rem 0 0;font-size:0.85rem"></p>
 </div>
+<div class="card" style="margin-top:1rem">
+  <h3 style="margin:0 0 0.5rem">Research agents (TradingAgents)</h3>
+  <p class="muted" style="font-size:0.88rem;margin:0 0 0.75rem">
+    Default <strong>OFF</strong> until backtest evidence exists. Agents may only veto or flag PASS signals —
+    never unblock a BLOCK, never place broker orders.
+    <strong>Cost warning:</strong> a full multi-agent run can be many LLM calls per symbol.
+  </p>
+  <div class="kv" style="margin-bottom:0.75rem">
+    <span>Enabled</span><span id="ag-enabled-label">{% if agents.enabled %}ON{% else %}OFF{% endif %}</span>
+    <span>Provider</span><span>{{ agents.llm_provider }}</span>
+    <span>Top-N / day cap</span><span>{{ agents.top_n }} / {{ agents.daily_call_cap }}</span>
+    <span>Debate / risk rounds</span><span>{{ agents.max_debate_rounds }} / {{ agents.max_risk_rounds }}</span>
+    <span>Timeout</span><span>{{ agents.timeout_sec }}s</span>
+  </div>
+  <div class="row" style="gap:0.5rem;flex-wrap:wrap;align-items:flex-end">
+    <label class="muted">Provider
+      <select id="ag-provider">
+        <option value="deepseek" {% if agents.llm_provider == "deepseek" %}selected{% endif %}>DeepSeek</option>
+        <option value="google" {% if agents.llm_provider == "google" %}selected{% endif %}>Google Gemini</option>
+        <option value="openai" {% if agents.llm_provider == "openai" %}selected{% endif %}>OpenAI</option>
+        <option value="anthropic" {% if agents.llm_provider == "anthropic" %}selected{% endif %}>Anthropic</option>
+        <option value="ollama" {% if agents.llm_provider == "ollama" %}selected{% endif %}>Ollama (local)</option>
+        <option value="openrouter" {% if agents.llm_provider == "openrouter" %}selected{% endif %}>OpenRouter</option>
+        <option value="chatgpt" {% if agents.llm_provider == "chatgpt" %}selected{% endif %}>ChatGPT plan</option>
+      </select>
+    </label>
+    <label class="muted">Quick model <input id="ag-quick" value="{{ agents.quick_think_llm|default:'' }}" placeholder="optional" /></label>
+    <label class="muted">Deep model <input id="ag-deep" value="{{ agents.deep_think_llm|default:'' }}" placeholder="optional" /></label>
+    <label class="muted">Top N <input id="ag-topn" type="number" min="1" max="10" value="{{ agents.top_n }}" style="width:4rem" /></label>
+    <label class="muted">Debate <input id="ag-debate" type="number" min="1" max="5" value="{{ agents.max_debate_rounds }}" style="width:4rem" /></label>
+    <label class="muted">Risk rounds <input id="ag-risk" type="number" min="1" max="5" value="{{ agents.max_risk_rounds }}" style="width:4rem" /></label>
+    <label class="muted">Day cap <input id="ag-cap" type="number" min="0" max="50" value="{{ agents.daily_call_cap }}" style="width:4rem" /></label>
+  </div>
+  <div class="row" style="margin-top:0.75rem;gap:0.5rem;align-items:center">
+    <label class="row" style="gap:0.35rem"><input type="checkbox" id="ag-enable" {% if agents.enabled %}checked{% endif %} /> Enable agents</label>
+    <label class="row" style="gap:0.35rem"><input type="checkbox" id="ag-ack" /> I accept LLM cost per run</label>
+    <button type="button" id="btn-save-agents">Save agent settings</button>
+    <span id="ag-status" class="muted"></span>
+  </div>
+  <p class="muted" style="margin:0.6rem 0 0;font-size:0.8rem">
+    Optional paid vendors (Alpha Vantage, TypeSafe Jev) stay off until you ask to enable them.
+    Install sidecar: <code>python -m venv .venv-ta</code> then
+    <code>.venv-ta\Scripts\pip install -r requirements-tradingagents.txt</code>.
+  </p>
+</div>
+
 {% if request.user.is_staff %}
 <div class="card" style="margin-top:1rem">
   <h3 style="margin-top:0">Staff: reset life after DEAD</h3>
@@ -147,6 +193,42 @@ document.getElementById('btn-save-ind-token').addEventListener('click', async fu
   if (data.ok) {
     st.textContent = 'Saved' + (data.expires_at ? ' · valid until ' + data.expires_at : '');
     document.getElementById('ind-token-input').value = '';
+  } else {
+    st.textContent = data.error || 'Save failed';
+  }
+});
+
+document.getElementById('btn-save-agents').addEventListener('click', async function () {
+  const st = document.getElementById('ag-status');
+  const enabled = document.getElementById('ag-enable').checked;
+  const ack = document.getElementById('ag-ack').checked;
+  if (enabled && !ack) {
+    st.textContent = 'Check “I accept LLM cost” to enable';
+    return;
+  }
+  st.textContent = 'Saving…';
+  const body = {
+    enabled: enabled,
+    acknowledge_cost: ack,
+    llm_provider: document.getElementById('ag-provider').value,
+    top_n: Number(document.getElementById('ag-topn').value || 3),
+    max_debate_rounds: Number(document.getElementById('ag-debate').value || 1),
+    max_risk_rounds: Number(document.getElementById('ag-risk').value || 1),
+    daily_call_cap: Number(document.getElementById('ag-cap').value || 6),
+  };
+  const q = (document.getElementById('ag-quick').value || '').trim();
+  const d = (document.getElementById('ag-deep').value || '').trim();
+  if (q) body.quick_think_llm = q;
+  if (d) body.deep_think_llm = d;
+  const resp = await fetch('/api/settings/agents/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    st.textContent = 'Saved';
+    document.getElementById('ag-enabled-label').textContent = data.settings.enabled ? 'ON' : 'OFF';
   } else {
     st.textContent = data.error || 'Save failed';
   }

@@ -1,0 +1,22 @@
+# TradingAgents research sidecar (pandas 3 / langchain) — isolated from Django
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TRADINGAGENTS_NO_UPDATE_CHECK=1 \
+    TRADINGAGENTS_RESULTS_DIR=/app/artifacts/research \
+    TRADINGAGENTS_CACHE_DIR=/app/data/tradingagents/cache \
+    TRADINGAGENTS_MEMORY_LOG_PATH=/app/data/tradingagents/memory/trading_memory.md
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-tradingagents.txt .
+RUN pip install --no-cache-dir -r requirements-tradingagents.txt
+
+COPY scripts/ta_runner.py /app/scripts/ta_runner.py
+RUN mkdir -p /app/artifacts/research /app/data/tradingagents/cache /app/data/tradingagents/memory
+
+ENTRYPOINT ["python", "/app/scripts/ta_runner.py"]

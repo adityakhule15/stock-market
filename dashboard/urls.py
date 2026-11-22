@@ -15,4 +15,5 @@ urlpatterns = [
     path("models/", views.models_page, name="models"),
     path("backtest/", views.backtest_page, name="backtest"),
     path("settings/", views.settings_page, name="settings"),
+    path("research/report/<int:run_id>/", views.research_report, name="research_report"),
 ]

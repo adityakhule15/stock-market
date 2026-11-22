@@ -42,6 +42,11 @@ def _register(sched) -> None:
         CronTrigger(day_of_week="mon-fri", hour=15, minute=45),
     )
     sched.add_job(wrap("eod_ingest", jobs.eod_ingest), CronTrigger(day_of_week="mon-fri", hour=16, minute=0))
+    # TradingAgents memory settlement — after eod_ingest, before retrain
+    sched.add_job(
+        wrap("agents_settle_memory", jobs.agents_settle_memory),
+        CronTrigger(day_of_week="mon-fri", hour=16, minute=15),
+    )
     sched.add_job(
         wrap("nightly_retrain", jobs.nightly_retrain),
         CronTrigger(day_of_week="mon-fri", hour=16, minute=30),

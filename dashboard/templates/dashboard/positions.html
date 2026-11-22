@@ -157,7 +157,11 @@
           {% if p.is_dummy %}<span class="badge warn kind-badge" id="kind-{{ p.id }}">DUMMY</span>
           {% else %}<span class="badge pass kind-badge" id="kind-{{ p.id }}" style="opacity:0.7">ORIGINAL</span>{% endif %}
         </div>
-        <div class="inst-meta muted">{% if row.is_fno %}F&amp;O{% else %}EQ{% endif %} · {{ p.instrument.symbol }}</div>
+        <div class="inst-meta muted">{% if row.is_fno %}F&amp;O{% else %}EQ{% endif %} · {{ p.instrument.symbol }}
+          {% if p.signal_id and p.signal.pipeline.agents.research_run_id %}
+          · <a href="{% url 'research_report' p.signal.pipeline.agents.research_run_id %}" target="_blank" rel="noopener">Why suggested?</a>
+          {% endif %}
+        </div>
       </td>
       <td class="product">{% if row.product %}{{ row.product }}{% elif p.signal_id %}{{ p.signal.product }}{% else %}—{% endif %}</td>
       <td><span class="side-pill {{ p.side|lower }}">{{ p.side }}</span></td>

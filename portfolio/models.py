@@ -118,6 +118,8 @@ class PortfolioSettings(models.Model):
     # INDstocks JWT — preferred over .env until JWT exp; cleared on expiry
     indstocks_access_token = models.TextField(blank=True, default="")
     indstocks_token_exp = models.DateTimeField(null=True, blank=True)
+    # TradingAgents UI overrides (enabled, provider, models, rounds, top_n, caps)
+    agents_config = models.JSONField(default=dict, blank=True)
 
     @classmethod
     def get_solo(cls) -> "PortfolioSettings":

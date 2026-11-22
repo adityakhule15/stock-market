@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "backtest",
     "dashboard",
     "notifications",
+    "research",
 ]
 
 MIDDLEWARE = [

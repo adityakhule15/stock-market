@@ -1,0 +1,11 @@
+# Isolated TradingAgents sidecar (Python >= 3.11).
+# Install into .venv-ta ONLY — do NOT install into the Django .venv.
+# pandas>=3 conflicts with StockScope's pandas<3 (Windows WDAC) pin.
+#
+#   python -m venv .venv-ta
+#   .venv-ta\Scripts\python -m pip install -U pip
+#   .venv-ta\Scripts\python -m pip install -r requirements-tradingagents.txt
+#
+# Package is published as a GitHub release wheel (not on PyPI as of v0.7.1).
+
+tradingagents @ https://github.com/TauricResearch/TradingAgents/releases/download/v0.7.1/tradingagents-0.7.1-py3-none-any.whl

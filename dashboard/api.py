@@ -850,6 +850,117 @@ def fno_watchlist(request):
     )
 
 
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def agents_settings(request):
+    """GET/POST TradingAgents glue settings (stored on PortfolioSettings.agents_config)."""
+    from research.adapter import load_agents_settings
+
+    ps = PortfolioSettings.get_solo()
+    if request.method == "GET":
+        merged = load_agents_settings()
+        return Response({"ok": True, "settings": merged, "stored": ps.agents_config or {}})
+
+    data = request.data or {}
+    allowed = {
+        "enabled",
+        "top_n",
+        "daily_call_cap",
+        "daily_cost_cap_inr",
+        "timeout_sec",
+        "retry_budget",
+        "max_debate_rounds",
+        "max_risk_rounds",
+        "selected_analysts",
+        "checkpoint_enabled",
+        "llm_provider",
+        "quick_think_llm",
+        "deep_think_llm",
+    }
+    stored = dict(ps.agents_config or {})
+    for k in allowed:
+        if k in data:
+            stored[k] = data[k]
+    # Cost warning gate: enabling requires acknowledge_cost=true
+    if stored.get("enabled") in (True, "true", "1", 1, "yes", "on"):
+        if not data.get("acknowledge_cost"):
+            return Response(
+                {
+                    "ok": False,
+                    "error": (
+                        "Enabling agents requires acknowledge_cost=true. "
+                        "A full multi-agent run can cost multiple LLM calls per symbol."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        stored["enabled"] = True
+    elif "enabled" in data:
+        stored["enabled"] = False
+    ps.agents_config = stored
+    ps.save(update_fields=["agents_config", "updated_at"])
+    return Response({"ok": True, "settings": load_agents_settings(), "stored": stored})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def research_run(request):
+    """Enqueue (or sync) a ResearchRun for a symbol — Advisor / manual trigger."""
+    from research.services import run_analysis
+
+    symbol = (request.data.get("symbol") or "").strip()
+    if not symbol:
+        return Response({"ok": False, "error": "symbol required"}, status=status.HTTP_400_BAD_REQUEST)
+    as_of = (request.data.get("as_of") or "").strip() or None
+    # Default async — never block the web request
+    sync = bool(request.data.get("sync") in (True, "true", "1", 1))
+    fno = bool(request.data.get("fno_underlying") in (True, "true", "1", 1))
+    signal_id = request.data.get("signal_id")
+    signal = None
+    if signal_id:
+        signal = Signal.objects.filter(pk=signal_id).first()
+    run = run_analysis(
+        symbol,
+        as_of=as_of,
+        signal=signal,
+        fno_underlying=fno,
+        sync=sync,
+    )
+    return Response(
+        {
+            "ok": True,
+            "id": run.id,
+            "status": run.status,
+            "rating": run.rating,
+            "yahoo_ticker": run.yahoo_ticker,
+            "error": run.error,
+            "report_url": f"/research/report/{run.id}/" if run.report_html_path else None,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def research_runs(request):
+    from research.models import ResearchRun
+
+    qs = ResearchRun.objects.all()[:50]
+    rows = [
+        {
+            "id": r.id,
+            "symbol": r.symbol,
+            "yahoo_ticker": r.yahoo_ticker,
+            "as_of": r.as_of.isoformat(),
+            "status": r.status,
+            "rating": r.rating,
+            "error": r.error[:200] if r.error else "",
+            "report_url": f"/research/report/{r.id}/" if r.report_html_path else None,
+        }
+        for r in qs
+    ]
+    return Response({"ok": True, "runs": rows})
+
+
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
 def reset_life(request):

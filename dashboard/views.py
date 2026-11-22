@@ -490,6 +490,12 @@ def backtest_page(request):
     result = None
     error = None
     symbol = request.POST.get("symbol", "RELIANCE.NS") if request.method == "POST" else "RELIANCE.NS"
+    ta_note = (
+        "Agent grid backtests: python manage.py ta_backtest "
+        "--tickers RELIANCE.NS --start YYYY-MM-DD --end YYYY-MM-DD --every 7. "
+        "Compare LightGBM-only vs +agent veto vs agents-only vs NIFTY buy-and-hold in docs/RESULTS.md "
+        "(fill after approved LLM spend). Agents stay OFF by default."
+    )
     if request.method == "POST":
         try:
             from backtest.engine import run_backtest
@@ -504,16 +510,62 @@ def backtest_page(request):
                 result = run_backtest(symbol, bars, registry.load(champ))
         except Exception as exc:  # noqa: BLE001
             error = str(exc)
+    from research.models import ResearchRun
+
+    recent_ta = ResearchRun.objects.filter(status=ResearchRun.Status.OK).order_by("-created_at")[:10]
     return render(
         request,
         "dashboard/backtest.html",
-        {"result": result, "error": error, "symbol": symbol},
+        {
+            "result": result,
+            "error": error,
+            "symbol": symbol,
+            "ta_note": ta_note,
+            "recent_ta": recent_ta,
+            "allow_dead_content": True,
+        },
     )
+
+
+def research_report(request, run_id: int):
+    """Serve complete_report.html for a ResearchRun (path confined to artifacts/research)."""
+    from pathlib import Path
+
+    from django.conf import settings as djsettings
+    from django.http import FileResponse, Http404, HttpResponse
+
+    from research.models import ResearchRun
+
+    try:
+        run = ResearchRun.objects.get(pk=run_id)
+    except ResearchRun.DoesNotExist as exc:
+        raise Http404("Research run not found") from exc
+    path = (run.report_html_path or "").strip()
+    if not path:
+        return HttpResponse(
+            "<p>No HTML report for this run. Rating: %s</p><pre>%s</pre>"
+            % (run.rating or "—", (run.decision or run.error or "")[:4000]),
+            content_type="text/html",
+        )
+    p = Path(path)
+    if not p.is_absolute():
+        p = Path(djsettings.BASE_DIR) / p
+    root = (Path(djsettings.ARTIFACTS_DIR) / "research").resolve()
+    try:
+        resolved = p.resolve()
+    except OSError as exc:
+        raise Http404("Report missing") from exc
+    if not (str(resolved) == str(root) or str(resolved).startswith(str(root) + "/") or str(resolved).startswith(str(root) + "\\")):
+        raise Http404("Report path not allowed")
+    if not resolved.exists():
+        raise Http404("Report file missing")
+    return FileResponse(resolved.open("rb"), content_type="text/html")
 
 
 def settings_page(request):
     from marketdata import indstocks as ind
     from portfolio.services import reconcile_paper_cash, refresh_life_status
+    from research.adapter import load_agents_settings
 
     ps = refresh_life_status(PortfolioSettings.get_solo(), alert=False)
     reconcile_paper_cash()
@@ -526,6 +578,7 @@ def settings_page(request):
             "portfolio": ps,
             "indstocks_token": bool(tok.get("has_token")),
             "indstocks_token_status": tok,
+            "agents": load_agents_settings(),
             "allow_dead_content": True,
         },
     )
@@ -535,8 +588,11 @@ def journal_page(request):
     from portfolio.day_book import build_day_book
     from portfolio.models import TradeReview
     from portfolio.reviews import discipline_score, top_mistake_tags
+    from research.models import ResearchRun
+    from research.services import parse_memory_entries
 
     day = (request.GET.get("day") or "").strip() or None
+    tab = (request.GET.get("tab") or "day").lower()
     day_book = build_day_book(day)
     reviews = (
         TradeReview.objects.select_related("position", "position__instrument")
@@ -552,6 +608,8 @@ def journal_page(request):
             .order_by("-created_at")[:100]
         )
     closed = Position.objects.filter(status=Position.Status.CLOSED).order_by("-closed_at")[:50]
+    agent_entries = parse_memory_entries(40)
+    agent_runs = ResearchRun.objects.order_by("-created_at")[:40]
     return render(
         request,
         "dashboard/journal.html",
@@ -562,6 +620,9 @@ def journal_page(request):
             "top_mistakes": top_mistake_tags(),
             "day_book": day_book,
             "day_book_date": day_book["date"],
+            "journal_tab": tab,
+            "agent_entries": agent_entries,
+            "agent_runs": agent_runs,
             "allow_dead_content": True,
         },
     )
