@@ -1,4 +1,4 @@
-# Creates a Desktop shortcut that launches StockScope in Chrome on port 8001
+﻿# Creates a Desktop shortcut that launches StockScope in Chrome on port 8001
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $bat = Join-Path $root "scripts\start_stockscope.bat"
@@ -9,8 +9,8 @@ $w = New-Object -ComObject WScript.Shell
 $sc = $w.CreateShortcut($lnkPath)
 $sc.TargetPath = $bat
 $sc.WorkingDirectory = $root
-$sc.WindowStyle = 7  # minimized
-$sc.Description = "Start StockScope India (port 8001) and open in Chrome"
+$sc.WindowStyle = 1  # normal — show startup progress / errors
+$sc.Description = "Start StockScope India (port 8001), train if needed, open browser"
 # Prefer Chrome icon if available
 $chromeIcon = @(
   "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
