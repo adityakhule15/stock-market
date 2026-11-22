@@ -46,4 +46,22 @@ python manage.py ta_backtest --tickers RELIANCE.NS,TCS.NS --start YYYY-MM-DD --e
 
 ## Plain verdict
 
-_Not measured yet._ After filling the tables above, replace this sentence with a one-line statement of whether (c) beat (a) and NIFTY B&H on the chosen OOS window, net of charges — or that it did not.
+_Not measured yet for TradingAgents._ After filling the tables above, replace this sentence with a one-line statement of whether (c) beat (a) and NIFTY B&H on the chosen OOS window, net of charges — or that it did not.
+
+---
+
+## Kronos local forecast (measured, not a trading claim)
+
+Walk-forward on **RELIANCE.NS** only, from **2025-09-01** (earlier dates may sit inside Kronos pretraining), sampled every 10 sessions, horizon 5 daily bars, 8 CPU paths, model `NeoQuasar/Kronos-small`.
+
+| Window | n | Direction hit rate | Target-first rate | Stop-first rate | Notes |
+|--------|---|--------------------|-------------------|-----------------|-------|
+| 2025-09-01 → run date | 30 | 0.533 | 0.300 | 0.467 | ATR stop 1.0× / target 1.5×; **not** net of Groww charges; not a PASS/BLOCK claim |
+
+Command:
+
+```bash
+python manage.py kronos_backtest --symbol RELIANCE --every 10 --paths 8 --horizon 5
+```
+
+**Plain note:** 53.3% direction hit rate on this small sampled window is near a coin flip. Do not treat Kronos alone as an edge. Consensus remains filter-mode on top of LightGBM + risk_gate.
