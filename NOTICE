@@ -25,3 +25,11 @@ This product also includes software from:
   Vendored unmodified at commit 67b630e67f6a18c9e9be918d9b4337c960db1e9a
   under third_party/kronos/ (model/ only). Inference runs in an isolated
   .venv-kronos CPU sidecar; StockScope never places broker orders via Kronos.
+
+  day-trader-skill
+  Copyright (c) Jakeschincariol contributors
+  https://github.com/jakeschincariol/day-trader-skill
+  Licensed under the MIT License
+  Vendored SKILL.md specs at commit 3d0f4ef6986f4984b7c6bd46f7ff4f87744c3abd
+  under third_party/day-trader-skill/. StockScope maps the 11 sub-skills to
+  NSE India stages; trader-pelosi is adapted to SEBI PIT disclosures.

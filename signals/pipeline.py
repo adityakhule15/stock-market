@@ -29,6 +29,9 @@ PIPELINE_KEYS = (
     "gate",
     "ticket",
     "alerts",
+    "analyst",
+    "insider",
+    "skill_checklist",
 )
 
 
@@ -286,6 +289,14 @@ def run_pipeline(
         "channels": ["browser", "telegram"],
         "reason": "alerts armed after you confirm the order",
     }
+
+    # 10–11 Analyst + India insider (filled by background model_review; placeholders here)
+    pipe.setdefault("analyst", {"ok": False, "pending": True, "facts_only": True, "vote": None})
+    pipe.setdefault("insider", {"ok": False, "pending": True, "flag": "none", "vote": None})
+
+    from signals.skill_checklist import build_skill_checklist
+
+    pipe["skill_checklist"] = build_skill_checklist(pipe, gate_passed=gate.passed)
 
     return {
         "pipeline": pipe,

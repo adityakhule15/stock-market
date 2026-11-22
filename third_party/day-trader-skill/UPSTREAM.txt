@@ -1,0 +1,6 @@
+Upstream: https://github.com/jakeschincariol/day-trader-skill
+Pinned commit: 3d0f4ef6986f4984b7c6bd46f7ff4f87744c3abd
+License: MIT (see LICENSE)
+Vendored: each sub-skill's SKILL.md (reference specs only).
+StockScope maps these to NSE India stages; trader-pelosi is adapted to
+SEBI PIT insider disclosures via NSE corporates-pit-gg.
