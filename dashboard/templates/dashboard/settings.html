@@ -346,14 +346,22 @@ document.getElementById('btn-kill-confirm')?.addEventListener('click', async fun
   if (!on && !confirm('Turn kill switch OFF?')) return;
   const st = document.getElementById('kill-status');
   st.textContent = 'Saving…';
-  const resp = await fetch('/api/portfolio/kill-switch/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-    body: JSON.stringify({ on: on }),
-  });
-  const data = await resp.json();
-  st.textContent = data.kill_switch ? 'Kill switch ON' : 'Kill switch OFF';
-  location.reload();
+  try {
+    const resp = await fetch('/api/kill-switch/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ on: on }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      st.textContent = data.detail || data.error || ('Failed (' + resp.status + ')');
+      return;
+    }
+    st.textContent = data.kill_switch ? 'Kill switch ON' : 'Kill switch OFF';
+    location.reload();
+  } catch (e) {
+    st.textContent = 'Save failed: ' + e;
+  }
 });
 
 document.getElementById('btn-typed-reset')?.addEventListener('click', async function () {

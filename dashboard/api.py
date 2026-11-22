@@ -803,11 +803,12 @@ def orb_today(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdminUser])
+@permission_classes([AllowAny])
 def set_kill_switch(request):
+    """Local single-user app — AllowAny like other Settings toggles."""
     on = bool(request.data.get("on", True))
     ps = arm_kill_switch(on)
-    return Response({"kill_switch": ps.kill_switch, "life_status": ps.life_status})
+    return Response({"ok": True, "kill_switch": ps.kill_switch, "life_status": ps.life_status})
 
 
 @api_view(["GET", "POST"])
@@ -1095,9 +1096,9 @@ def research_runs(request):
 
 
 @api_view(["POST"])
-@permission_classes([IsAdminUser])
+@permission_classes([AllowAny])
 def reset_life(request):
-    """Staff-only clear of DEAD status after topping up capital."""
+    """Clear DEAD / restore wallet from Settings (local single-user)."""
     equity = request.data.get("equity")
     cash = request.data.get("cash")
     try:

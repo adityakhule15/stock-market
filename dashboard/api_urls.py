@@ -24,6 +24,7 @@ urlpatterns = [
     path("health/", api.health, name="health"),
     path("orb/", api.orb_today, name="orb"),
     path("kill-switch/", api.set_kill_switch, name="kill_switch"),
+    path("portfolio/kill-switch/", api.set_kill_switch, name="kill_switch_portfolio"),
     path("portfolio/reset-life/", api.reset_life, name="reset_life"),
     path("settings/fno-watchlist/", api.fno_watchlist, name="fno_watchlist"),
     path("settings/indstocks-token/", api.indstocks_token, name="indstocks_token"),
