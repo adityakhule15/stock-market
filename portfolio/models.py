@@ -120,6 +120,8 @@ class PortfolioSettings(models.Model):
     indstocks_token_exp = models.DateTimeField(null=True, blank=True)
     # TradingAgents UI overrides (enabled, provider, models, rounds, top_n, caps)
     agents_config = models.JSONField(default=dict, blank=True)
+    # Kronos / consensus toggles (kronos_enabled, kronos_model_size, consensus_veto, …)
+    models_config = models.JSONField(default=dict, blank=True)
 
     @classmethod
     def get_solo(cls) -> "PortfolioSettings":

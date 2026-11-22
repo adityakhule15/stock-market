@@ -410,27 +410,16 @@ def generate_signals_for_universe(symbols: list[str] | None = None) -> list[Sign
         except Exception as exc:  # noqa: BLE001
             logger.exception("Signal gen failed for %s: %s", symbol, exc)
 
-    # TradingAgents review runs in a background thread so Scan / premarket
-    # never block on LLM calls. Fail-open; never places broker orders.
+    # Multi-model review (Kronos, analyst, insider, TradingAgents top-N, consensus)
+    # runs in a background thread so Scan / premarket never block.
     if created:
         try:
-            from research.adapter import agents_enabled
-            from research.workers import enqueue_callable
+            from signals.model_review import enqueue_model_review
 
-            if agents_enabled():
-                signal_ids = [s.id for s in created if getattr(s, "id", None)]
-
-                def _review():
-                    from signals.models import Signal
-                    from research.services import review_pass_signals
-
-                    qs = list(Signal.objects.filter(id__in=signal_ids))
-                    if qs:
-                        review_pass_signals(qs)
-
-                enqueue_callable("agents-review-equity", _review)
+            signal_ids = [s.id for s in created if getattr(s, "id", None)]
+            enqueue_model_review(signal_ids)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("TradingAgents review enqueue skipped: %s", exc)
+            logger.exception("model review enqueue skipped: %s", exc)
 
     # F&O is on-demand from the F&O tab (user picks underlying) — not auto-dumped here
     return created
@@ -648,16 +637,18 @@ def _fno_option_tickets(
         except Exception as exc:  # noqa: BLE001
             logger.info("Index F&O %s skipped: %s", name, exc)
 
-    # Agents on UNDERLYING only (direction/risk context) — strike/lot/charges untouched.
-    # Background so F&O scan never blocks on LLM calls.
+    # Model review + agents on UNDERLYING only (direction/risk context).
+    # Background so F&O scan never blocks. Consensus never sizes F&O lots.
     if out:
         try:
             from research.adapter import agents_enabled
             from research.workers import enqueue_callable
+            from signals.model_review import enqueue_model_review
+
+            signal_ids = [s.id for s in out if getattr(s, "id", None)]
+            enqueue_model_review(signal_ids)
 
             if agents_enabled():
-                signal_ids = [s.id for s in out if getattr(s, "id", None)]
-
                 def _review_fno():
                     from signals.models import Signal
                     from research.services import attach_underlying_research
@@ -668,5 +659,5 @@ def _fno_option_tickets(
 
                 enqueue_callable("agents-review-fno", _review_fno)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("F&O underlying research enqueue skipped: %s", exc)
+            logger.exception("F&O model review enqueue skipped: %s", exc)
     return out

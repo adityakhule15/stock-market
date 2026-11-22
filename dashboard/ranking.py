@@ -168,20 +168,29 @@ def score_signal(signal, wallet: float) -> dict[str, Any]:
         live_bonus = -15.0
         edge_comp = _clamp(edge_comp - 10)
 
-    # TradingAgents rank nudge (never overrides net_ok / capital filters)
-    agents_bonus = 0.0
+    # Consensus / agents rank nudge (never overrides net_ok / capital filters).
+    # Prefer consensus score; fall back to legacy agents-only badges.
+    consensus_bonus = 0.0
     pipe = getattr(signal, "pipeline", None) or {}
-    agents = pipe.get("agents") if isinstance(pipe, dict) else None
-    if not isinstance(agents, dict):
-        gate_a = getattr(signal, "gate", None) or {}
-        agents = gate_a.get("agents") if isinstance(gate_a, dict) else None
-    if isinstance(agents, dict):
-        if agents.get("vetoed"):
-            agents_bonus = -20.0
-        elif agents.get("neutral"):
-            agents_bonus = -float(getattr(cfg, "AGENTS_RANK_PENALTY_HOLD", 8.0) or 8.0)
-        elif agents.get("badge") == "agents_bullish":
-            agents_bonus = float(getattr(cfg, "AGENTS_RANK_BOOST_BUY", 4.0) or 4.0)
+    consensus = pipe.get("consensus") if isinstance(pipe, dict) else None
+    if isinstance(consensus, dict) and consensus.get("score") is not None:
+        if consensus.get("vetoed"):
+            consensus_bonus = -20.0
+        else:
+            points = float(getattr(cfg, "CONSENSUS_RANK_POINTS", 10.0) or 10.0)
+            consensus_bonus = points * float(consensus["score"])
+    else:
+        agents = pipe.get("agents") if isinstance(pipe, dict) else None
+        if not isinstance(agents, dict):
+            gate_a = getattr(signal, "gate", None) or {}
+            agents = gate_a.get("agents") if isinstance(gate_a, dict) else None
+        if isinstance(agents, dict):
+            if agents.get("vetoed"):
+                consensus_bonus = -20.0
+            elif agents.get("neutral"):
+                consensus_bonus = -float(getattr(cfg, "AGENTS_RANK_PENALTY_HOLD", 8.0) or 8.0)
+            elif agents.get("badge") == "agents_bullish":
+                consensus_bonus = float(getattr(cfg, "AGENTS_RANK_BOOST_BUY", 4.0) or 4.0)
 
     total = (
         0.28 * profit_comp
@@ -190,7 +199,7 @@ def score_signal(signal, wallet: float) -> dict[str, Any]:
         + 0.12 * duration_comp
         + 0.14 * wallet_comp
         + live_bonus
-        + agents_bonus
+        + consensus_bonus
     )
     total = _clamp(total)
 
