@@ -246,7 +246,7 @@ def signals_partial(request):
 
     # Life-aware cap: DEAD=0, SURVIVAL=1, ALIVE=1–3
     if ps.life_status == "dead":
-        ranked, no_trade = [], "Wallet critical: stop trading, review your journal"
+        ranked, no_trade = [], "Wallet critical: stop trading — do not force recovery trades"
     elif tab == "all":
         pack = rank_for_life(affordable, wallet, life_status=ps.life_status, regime=regime)
         ranked, no_trade = pack["signals"], pack.get("no_trade")
@@ -256,7 +256,11 @@ def signals_partial(request):
         )
         for s in ranked:
             s.section = "normal"
-        no_trade = None if ranked else "No Normal ideas that clear net + gate filters"
+        no_trade = (
+            None
+            if ranked
+            else "No Normal ideas clear the bar — sit out rather than take a weak ticket"
+        )
     else:
         # F&O tab after cutoff: show expired section only
         if not stage_info["fno_actionable"]:
@@ -274,11 +278,11 @@ def signals_partial(request):
                 no_trade = None
             elif affordable:
                 no_trade = (
-                    "F&O ideas scanned but none cleared local edge / live-pricing filters — "
-                    "try Scan All or wait for a stronger setup"
+                    "No F&O cleared the edge bar — wait for a stronger setup; "
+                    "do not re-enter to make back a loss"
                 )
             else:
-                no_trade = "No F&O lot fits — show Normal ideas only"
+                no_trade = "No F&O lot fits — show Normal ideas only, or sit out"
 
     ranked = ranked[: max(top_limit * 2, top_limit)]
     # Stick only actionable board (not expired F&O)

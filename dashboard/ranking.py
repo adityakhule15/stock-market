@@ -389,10 +389,10 @@ def life_top_n(life_status: str) -> int:
 def no_trade_day_reason(signals: list, *, regime: dict | None = None) -> str | None:
     """Return message when best idea is a coin flip or market is choppy."""
     if regime and regime.get("no_trade_bias"):
-        return "Best trade today is no trade — high-vol / choppy regime"
+        return "Sit out — choppy / high-vol. Do not force a trade and stack another loss"
     tradable = [s for s in signals if not _is_coin_flip(s)]
     if not tradable and signals:
-        return "Best trade today is no trade — best ideas are COIN FLIP"
+        return "Sit out — best ideas are COIN FLIP. Empty board beats another loss"
     return None
 
 
@@ -407,7 +407,7 @@ def rank_for_life(
     if life_status == "dead":
         return {
             "signals": [],
-            "no_trade": "Wallet critical: stop trading, review your journal",
+            "no_trade": "Wallet critical: stop trading — do not force recovery trades",
             "limit": 0,
         }
     limit = life_top_n(life_status)

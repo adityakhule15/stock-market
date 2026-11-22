@@ -69,11 +69,11 @@ def _verdict(total_pnl: float, n: int, equity: float) -> str:
     if equity <= cfg.DEAD_FLOOR:
         return "DEAD — stop trading; staff reset required"
     if equity <= cfg.SURVIVAL_EQUITY:
-        return "SURVIVAL — reduce size; protect remaining capital"
+        return "SURVIVAL — stop the bleed; fewer trades, higher bar — do not chase losses"
     if n < 5:
         return "TOO_EARLY — need more confirmed closes for a stable read"
     if total_pnl > 0 and equity > cfg.CAPITAL:
         return "AHEAD — net profitable vs ₹2,000 start"
     if total_pnl < 0:
-        return "BEHIND — cutting losses; stick to gates and paper until edge returns"
-    return "FLAT — no edge yet; keep paper discipline"
+        return "BEHIND — protect capital; skip revenge trades until edge returns"
+    return "FLAT — no edge yet; empty board beats a forced loss"
