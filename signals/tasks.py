@@ -410,16 +410,27 @@ def generate_signals_for_universe(symbols: list[str] | None = None) -> list[Sign
         except Exception as exc:  # noqa: BLE001
             logger.exception("Signal gen failed for %s: %s", symbol, exc)
 
-    # TradingAgents review: after LightGBM + risk_gate PASS, before ranking/UI.
-    # Fail-open; never places broker orders; never unblocks a BLOCK.
-    try:
-        from research.adapter import agents_enabled
-        from research.services import review_pass_signals
+    # TradingAgents review runs in a background thread so Scan / premarket
+    # never block on LLM calls. Fail-open; never places broker orders.
+    if created:
+        try:
+            from research.adapter import agents_enabled
+            from research.workers import enqueue_callable
 
-        if agents_enabled() and created:
-            review_pass_signals(created)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("TradingAgents review skipped: %s", exc)
+            if agents_enabled():
+                signal_ids = [s.id for s in created if getattr(s, "id", None)]
+
+                def _review():
+                    from signals.models import Signal
+                    from research.services import review_pass_signals
+
+                    qs = list(Signal.objects.filter(id__in=signal_ids))
+                    if qs:
+                        review_pass_signals(qs)
+
+                enqueue_callable("agents-review-equity", _review)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("TradingAgents review enqueue skipped: %s", exc)
 
     # F&O is on-demand from the F&O tab (user picks underlying) — not auto-dumped here
     return created
@@ -638,12 +649,24 @@ def _fno_option_tickets(
             logger.info("Index F&O %s skipped: %s", name, exc)
 
     # Agents on UNDERLYING only (direction/risk context) — strike/lot/charges untouched.
-    try:
-        from research.adapter import agents_enabled
-        from research.services import attach_underlying_research
+    # Background so F&O scan never blocks on LLM calls.
+    if out:
+        try:
+            from research.adapter import agents_enabled
+            from research.workers import enqueue_callable
 
-        if agents_enabled() and out:
-            attach_underlying_research(out)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("F&O underlying research skipped: %s", exc)
+            if agents_enabled():
+                signal_ids = [s.id for s in out if getattr(s, "id", None)]
+
+                def _review_fno():
+                    from signals.models import Signal
+                    from research.services import attach_underlying_research
+
+                    qs = list(Signal.objects.filter(id__in=signal_ids))
+                    if qs:
+                        attach_underlying_research(qs)
+
+                enqueue_callable("agents-review-fno", _review_fno)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("F&O underlying research enqueue skipped: %s", exc)
     return out

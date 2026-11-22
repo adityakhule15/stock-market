@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -58,6 +57,12 @@ def agents_enabled() -> bool:
 
 
 def resolve_ta_python() -> Path:
+    """Return the TradingAgents sidecar interpreter.
+
+    Never falls back to Django's ``sys.executable`` — that silently imports
+    against the wrong pandas pin and surfaces as ``No module named
+    'tradingagents'``. Missing sidecar → clear error in ``invoke_runner``.
+    """
     override = os.getenv("TA_PYTHON", "").strip()
     if override:
         return Path(override)
@@ -67,7 +72,13 @@ def resolve_ta_python() -> Path:
         return win
     if nix.exists():
         return nix
-    return Path(sys.executable)
+    # Prefer the platform-expected path so the missing-venv error is actionable.
+    return win if os.name == "nt" else nix
+
+
+def ta_sidecar_installed() -> bool:
+    python = resolve_ta_python()
+    return python.exists()
 
 
 def resolve_ta_runner() -> Path:
@@ -199,7 +210,8 @@ def build_ta_config(extra: dict[str, Any] | None = None) -> dict[str, Any]:
         "max_risk_discuss_rounds": int(agents["max_risk_rounds"]),
         "checkpoint_enabled": bool(agents["checkpoint_enabled"]),
         "holding_period_days": int(agents["holding_period_days"]),
-        "benchmark_ticker": os.getenv("TRADINGAGENTS_BENCHMARK_TICKER") or None,
+        # Default India benchmark; never leave None (upstream falls back to SPY).
+        "benchmark_ticker": os.getenv("TRADINGAGENTS_BENCHMARK_TICKER") or "^NSEI",
         # Prefer India-relevant macro queries when not overridden upstream
         "output_language": os.getenv("TRADINGAGENTS_OUTPUT_LANGUAGE") or "English",
     }
@@ -329,9 +341,11 @@ def invoke_runner(request: dict[str, Any], *, timeout_sec: int | None = None) ->
         return {
             "ok": False,
             "error": (
-                f"TA Python missing: {python}. Create .venv-ta and "
-                "pip install -r requirements-tradingagents.txt"
+                "agents sidecar not installed — create .venv-ta and "
+                "pip install -r requirements-tradingagents.txt "
+                f"(expected {python})"
             ),
+            "badge": "agents_unavailable",
         }
 
     agents = load_agents_settings()

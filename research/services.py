@@ -94,12 +94,14 @@ def run_analysis(
 
     agents = load_agents_settings()
     selected = analysts or list(agents.get("selected_analysts") or [])
-    ta_config = build_ta_config()
-    # Explicit India benchmark for indices / .NS
-    if yahoo.startswith("^") or yahoo.endswith(".NS") or yahoo.endswith(".BO"):
-        ta_config.setdefault("benchmark_ticker", "^NSEI" if not yahoo.startswith("^NSEBANK") else "^NSEBANK")
-        if yahoo in {"^NSEI", "^INDIAVIX"} or yahoo.endswith(".NS"):
-            ta_config["benchmark_ticker"] = "^NSEI"
+    # Explicit India benchmark for all Indian tickers (never leave None → SPY).
+    if yahoo.startswith("^NSEBANK"):
+        bench = "^NSEBANK"
+    elif yahoo.startswith("^") or yahoo.endswith(".NS") or yahoo.endswith(".BO"):
+        bench = "^NSEI"
+    else:
+        bench = "^NSEI"
+    ta_config = build_ta_config({"benchmark_ticker": bench})
 
     if portfolio is ...:
         book = build_portfolio_context(known=True)

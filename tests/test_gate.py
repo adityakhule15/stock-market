@@ -7,11 +7,13 @@ IST = ZoneInfo("Asia/Kolkata")
 
 
 def _order(**kw):
+    # Defaults fit current trading_config: RISK_PER_TRADE=1% of ₹2000 → ₹20,
+    # MAX_POSITION_PCT=30% → ₹600.
     o = {
         "symbol": "TEST.NS",
         "strategy": "swing",
-        "max_loss": 25,
-        "capital_used": 700,
+        "max_loss": 20,
+        "capital_used": 600,
         "rr_net": 2.1,
         "qty": 7,
         "probability": 0.7,

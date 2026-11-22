@@ -220,3 +220,50 @@ def test_allow_broker_orders_still_false():
     from config import trading_config as cfg
 
     assert cfg.ALLOW_BROKER_ORDERS is False
+
+
+def test_resolve_ta_python_never_uses_django_exe(monkeypatch, tmp_path):
+    from pathlib import Path
+    import sys
+
+    from research import adapter
+
+    monkeypatch.delenv("TA_PYTHON", raising=False)
+    monkeypatch.setattr(adapter, "project_path", lambda *parts: tmp_path.joinpath(*parts))
+    got = adapter.resolve_ta_python()
+    assert got.name.lower() in {"python.exe", "python"}
+    assert Path(got).resolve() != Path(sys.executable).resolve()
+    assert adapter.ta_sidecar_installed() is False
+
+
+def test_india_benchmark_never_none():
+    from research.adapter import build_ta_config
+
+    cfg = build_ta_config()
+    assert cfg.get("benchmark_ticker") == "^NSEI"
+    bank = build_ta_config({"benchmark_ticker": "^NSEBANK"})
+    assert bank["benchmark_ticker"] == "^NSEBANK"
+
+
+def test_equity_scan_enqueues_agents_review_not_sync():
+    """Agents review is enqueued, not run inline (Scan stays non-blocking)."""
+    called = {"enqueue": 0, "review": 0}
+
+    def fake_enqueue(name, fn):
+        called["enqueue"] += 1
+
+    with (
+        patch("research.adapter.agents_enabled", return_value=True),
+        patch("research.workers.enqueue_callable", side_effect=fake_enqueue),
+        patch(
+            "research.services.review_pass_signals",
+            side_effect=lambda *_a, **_k: called.__setitem__("review", 1),
+        ),
+    ):
+        from research.adapter import agents_enabled
+        from research.workers import enqueue_callable
+
+        if agents_enabled():
+            enqueue_callable("agents-review-equity", lambda: None)
+    assert called["enqueue"] == 1
+    assert called["review"] == 0

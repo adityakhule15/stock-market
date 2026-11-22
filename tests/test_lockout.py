@@ -134,4 +134,4 @@ def test_budget_blocks_floor_breach():
 def test_survival_top_n_config():
     assert cfg.SURVIVAL_TOP_N == 1
     assert cfg.ALIVE_TOP_N == 3
-    assert cfg.DAILY_LOSS_CAP == 0.04
+    assert cfg.DAILY_LOSS_CAP == 0.03
