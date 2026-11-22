@@ -26,6 +26,7 @@ PKG_DIRS = (
     "backtest",
     "notifications",
     "research",
+    "forecast",
     "scripts",
 )
 

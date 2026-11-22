@@ -51,6 +51,11 @@ def _register(sched) -> None:
         wrap("nightly_retrain", jobs.nightly_retrain),
         CronTrigger(day_of_week="mon-fri", hour=16, minute=30),
     )
+    # Kronos daily precompute after retrain (CPU; fail-open if disabled)
+    sched.add_job(
+        wrap("kronos_nightly", jobs.kronos_nightly),
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=0),
+    )
     sched.add_job(wrap("weekly_retrain", jobs.weekly_retrain), CronTrigger(day_of_week="sat", hour=10, minute=0))
     sched.add_job(wrap("drift_check", jobs.drift_check), CronTrigger(minute=5))
 

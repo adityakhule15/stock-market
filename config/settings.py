@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "dashboard",
     "notifications",
     "research",
+    "forecast",
 ]
 
 MIDDLEWARE = [

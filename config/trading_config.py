@@ -164,6 +164,32 @@ AGENTS_HOLDING_PERIOD_DAYS = 5
 AGENTS_RANK_BOOST_BUY = 4.0  # mild score bump for Buy/Overweight
 AGENTS_RANK_PENALTY_HOLD = 8.0  # lower rank when agents_neutral
 
+# Kronos local forecast (CPU sidecar) — OFF until Settings enable / backtest evidence
+KRONOS_ENABLED = False
+KRONOS_PATHS = 32
+KRONOS_LOOKBACK = 400
+KRONOS_PRED_LEN = 5
+KRONOS_T = 1.0
+KRONOS_TOP_P = 0.9
+KRONOS_SEED = 19
+KRONOS_TIMEOUT_SEC = 300
+
+# Multi-model consensus (filter mode) — see signals/consensus.py
+CONSENSUS_ENABLED = True
+CONSENSUS_VETO_ENABLED = True
+CONSENSUS_MIN_MODELS = 3
+CONSENSUS_VETO_THRESHOLD = -0.25
+CONSENSUS_AGREE_THRESHOLD = 0.15
+CONSENSUS_RANK_POINTS = 10.0
+CONSENSUS_WEIGHTS = {
+    "lightgbm": 0.30,
+    "time_machine": 0.20,
+    "kronos": 0.20,
+    "tradingagents": 0.15,
+    "meta": 0.10,
+    "insider": 0.05,
+}
+
 
 def life_status_for_equity(equity: float) -> str:
     if equity <= DEAD_FLOOR:

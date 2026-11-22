@@ -117,6 +117,32 @@ def agents_settle_memory():
         return f"error={exc}"
 
 
+def kronos_nightly():
+    """Precompute Kronos daily forecasts for the scan universe (CPU sidecar)."""
+    try:
+        from forecast.adapter import kronos_enabled, kronos_sidecar_installed
+        from forecast.services import forecast_universe
+        from marketdata.management.commands.bootstrap import BOOTSTRAP_SYMBOLS
+        from marketdata.universe import shortlist_symbols
+
+        if not kronos_enabled():
+            return "kronos disabled"
+        if not kronos_sidecar_installed():
+            return "kronos sidecar not installed"
+        symbols = list(
+            dict.fromkeys(
+                [s.upper().replace(".NS", "") for s in (shortlist_symbols(40) or [])]
+                + [s.upper().replace(".NS", "") for s in BOOTSTRAP_SYMBOLS]
+            )
+        )[:40]
+        rows = forecast_universe(symbols, interval="1d")
+        ok = sum(1 for r in rows if r.status == "ok")
+        return f"symbols={len(symbols)} ok={ok} err={len(rows) - ok}"
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("kronos_nightly failed")
+        return f"error={exc}"
+
+
 def nightly_retrain():
     from ml.meta_filter import maybe_promote_meta
     from ml.retrain import maybe_auto_rollback, retrain_and_maybe_promote
