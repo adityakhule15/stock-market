@@ -73,6 +73,18 @@ def survival_banner(request):
                 )
             )
 
+        from dashboard.plain_language import distance_words, what_you_can_do_today
+        from portfolio.strategy_gates import strategy_unlocked
+
+        fno_unlocked = strategy_unlocked("fno")
+        force_paper = cfg.FORCE_PAPER_UNTIL_GATES and not paper_gates_passed()
+        what = what_you_can_do_today(
+            life_status=ps.life_status,
+            kill_switch=bool(ps.kill_switch),
+            lockout=lockout_active,
+            fno_unlocked=fno_unlocked,
+            force_paper=force_paper,
+        )
         return {
             "life_status": ps.life_status,
             "life_equity": ps.equity,
@@ -83,9 +95,11 @@ def survival_banner(request):
             "wallet_pct_start": round(pct_start, 1),
             "dist_survival": round(dist_survival, 2),
             "dist_dead": round(dist_dead, 2),
+            "dist_survival_words": distance_words(dist_survival, "Survival"),
+            "dist_dead_words": distance_words(dist_dead, "Stop-trading"),
             "dead_floor": cfg.DEAD_FLOOR,
             "survival_equity": cfg.SURVIVAL_EQUITY,
-            "force_paper": cfg.FORCE_PAPER_UNTIL_GATES and not paper_gates_passed(),
+            "force_paper": force_paper,
             "kill_switch_on": ps.kill_switch,
             "lockout_active": lockout_active,
             "lockout_until": lockout_until,
@@ -98,7 +112,9 @@ def survival_banner(request):
             "capital_caution": caution,
             "drawdown_pct": round(drawdown_pct, 1),
             "fno_paused": fno_paused,
+            "fno_strategy_unlocked": fno_unlocked,
             "protect_msg": protect_msg,
+            "what_you_can_do": what or protect_msg,
         }
     except Exception:  # noqa: BLE001
         return {

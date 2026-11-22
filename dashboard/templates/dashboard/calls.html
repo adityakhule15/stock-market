@@ -59,10 +59,7 @@
 </div>
 {% endif %}
 
-{% for s in signals %}
-  {% include "dashboard/_signal_card.html" with s=s %}
-{% empty %}
-{% endfor %}
+{% include "dashboard/_calls_table.html" %}
 
 <script>
 const CSRF = '{{ csrf_token }}';

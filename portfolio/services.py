@@ -169,7 +169,27 @@ def record_equity_snapshot(mode: str = "paper") -> EquitySnapshot:
 
 
 def paper_gates_passed() -> bool:
-    """§17 paper gate: >= PAPER_MIN_SIGNALS closed and net PnL > 0."""
+    """Go-live when both stocks (and options if used) clear shadow unlock bars.
+
+    Falls back to legacy closed-position gate when shadow book is empty.
+    """
+    try:
+        from portfolio.strategy_gates import strategy_unlocked
+
+        stocks_ok = strategy_unlocked("stocks")
+        # Options need unlock only if user has been practicing them
+        from evidence.models import ShadowTrade
+
+        has_opts = ShadowTrade.objects.filter(kind="options").exists()
+        opts_ok = strategy_unlocked("fno") if has_opts else True
+        if stocks_ok and opts_ok:
+            # Prefer shadow evidence when enough samples exist
+            from evidence.stats import stocks_unlock_status
+
+            if stocks_unlock_status().get("n", 0) >= 10:
+                return True
+    except Exception:  # noqa: BLE001
+        pass
     closed = Position.objects.filter(status=Position.Status.CLOSED, mode="paper")
     pnls = [float(p.pnl) for p in closed]
     if len(pnls) < cfg.PAPER_MIN_SIGNALS:
@@ -266,8 +286,10 @@ def mark_signal_taken(
     fill_price: float | None = None,
     qty: int | None = None,
     order_confirmed: bool = True,
+    *,
+    is_dummy: bool = False,
 ) -> Position:
-    """Confirm you placed the Groww order. Debits premium + Groww buy charges from wallet."""
+    """Confirm Groww order. Debits wallet unless is_dummy (practice / no wallet impact)."""
     if not order_confirmed:
         raise ValueError("order_confirmed must be true to open a position")
     if mode == "live":
@@ -275,7 +297,7 @@ def mark_signal_taken(
             raise ValueError("Live mode locked until paper go-live gates PASS")
     ps = PortfolioSettings.get_solo()
     refresh_life_status(ps)
-    if ps.life_status == PortfolioSettings.LifeStatus.DEAD:
+    if ps.life_status == PortfolioSettings.LifeStatus.DEAD and not is_dummy:
         raise ValueError("Portfolio is DEAD — no new positions until staff reset")
 
     entry = Decimal(str(fill_price if fill_price is not None else signal.entry_trigger))
@@ -286,8 +308,8 @@ def mark_signal_taken(
     units = q * mult
     product = getattr(signal, "product", None) or "CNC"
 
-    note = "user confirmed Groww order"
-    if mult > 1:
+    note = "practice track (wallet unchanged)" if is_dummy else "user confirmed Groww order"
+    if mult > 1 and not is_dummy:
         note = f"user confirmed Groww | {q} lot×{mult} | lot_reserved"
 
     pos = Position.objects.create(
@@ -303,6 +325,7 @@ def mark_signal_taken(
         planned_target=signal.target1,
         mode=mode,
         notes=note,
+        is_dummy=bool(is_dummy),
     )
     fill = _record_fill(
         position=pos,
@@ -315,9 +338,8 @@ def mark_signal_taken(
         notes=note,
         contract=_contract_label(signal=signal),
     )
-    # Wallet: lock premium + buy charges
     reserved = abs(Decimal(fill.net_cash_flow))
-    pos.reserved_cash = reserved
+    pos.reserved_cash = reserved if not is_dummy else Decimal("0")
     pos.save(update_fields=["reserved_cash"])
     signal.status = Signal.Status.TRIGGERED
     signal.mode = mode
@@ -325,8 +347,9 @@ def mark_signal_taken(
 
     signal.taken_at = timezone.now()
     signal.save(update_fields=["status", "mode", "taken_at"])
-    ps.cash = Decimal(ps.cash) + Decimal(fill.net_cash_flow)  # negative for BUY
-    ps.save(update_fields=["cash", "updated_at"])
+    if not is_dummy:
+        ps.cash = Decimal(ps.cash) + Decimal(fill.net_cash_flow)  # negative for BUY
+        ps.save(update_fields=["cash", "updated_at"])
     return pos
 
 

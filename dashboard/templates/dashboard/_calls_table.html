@@ -1,0 +1,24 @@
+{% if ranked %}
+<table>
+  <thead>
+    <tr>
+      <th>Symbol</th><th>Side</th><th>TM</th><th>Kronos</th><th>Agents</th><th>Final</th><th>Note</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in ranked %}
+    <tr>
+      <td>{{ r.symbol }}</td>
+      <td>{{ r.side }}</td>
+      <td>{{ r.tm|default:"—" }}</td>
+      <td>{{ r.kronos|default:"—" }}</td>
+      <td>{{ r.agents|default:"—" }}</td>
+      <td>{{ r.final_call|default:"—" }}</td>
+      <td class="muted">{{ r.reason|default:"" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No consensus votes for today yet. Run a scan.</p>
+{% endif %}

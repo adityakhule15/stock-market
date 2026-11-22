@@ -84,16 +84,13 @@ def test_today_page_has_clickable_scan_controls(client, ps):
     resp = client.get(reverse("signals"))
     assert resp.status_code == 200
     html = resp.content.decode()
-    assert 'id="scan-all-btn"' in html
-    assert 'data-scan="all"' in html
-    assert 'data-scan="normal"' in html
-    assert 'data-scan="fno"' in html
-    assert 'id="ticket-tabs"' in html
-    assert "window.scanAll" in html or "function scanAll" in html or "scanAll =" in html
-    assert "fno-watch-data" in html
-    # Only All panel visible by default markup
-    assert 'data-panel="all"' in html
-    assert 'data-panel="normal" hidden' in html or 'hidden' in html
+    assert 'id="btn-scan"' in html
+    assert 'id="board-tabs"' in html
+    assert 'data-tab="all"' in html
+    assert 'data-tab="normal"' in html
+    assert 'data-tab="fno"' in html
+    assert 'id="signals"' in html
+    assert "today.js" in html or "Scan now" in html
 
 
 @pytest.mark.django_db
@@ -114,7 +111,7 @@ def test_signal_card_renders_without_reasons_setup(client, ps, equity_signal):
     html = resp.content.decode()
     assert "VariableDoesNotExist" not in html
     # Card or empty state is fine — just no crash
-    assert "Scan All" in html or "signal-" in html or "No tickets" in html or "idea" in html
+    assert "Scan" in html or "sig-" in html or "No tickets" in html or "idea" in html or "Sit out" in html or "Ready" in html
 
 
 @pytest.mark.django_db
@@ -187,6 +184,9 @@ def test_reanalyze_handles_missing_ltp_mark_dict(ps):
 
 @pytest.mark.django_db
 def test_advisor_and_settings_pages_load(client, ps):
-    for name in ("advisor", "settings", "performance"):
+    for name in ("advisor", "settings", "results"):
         resp = client.get(reverse(name))
         assert resp.status_code == 200, name
+    # Legacy performance → Results redirect
+    resp = client.get(reverse("performance"))
+    assert resp.status_code in (200, 301, 302)

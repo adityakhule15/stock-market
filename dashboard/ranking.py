@@ -192,12 +192,26 @@ def score_signal(signal, wallet: float) -> dict[str, Any]:
             elif agents.get("badge") == "agents_bullish":
                 consensus_bonus = float(getattr(cfg, "AGENTS_RANK_BOOST_BUY", 4.0) or 4.0)
 
+    # Expected rupees (primary) — fall back to legacy blend when missing
+    from signals.ev import expected_rupees
+
+    ev = expected_rupees(
+        probability=prob,
+        win_rs=profit_rs,
+        loss_rs=max_loss if max_loss > 0 else 1.0,
+        charges_rs=0.0,
+    )
+    ev_rs = float(ev["ev_rs"])
+    ev_per_risk = ev_rs / max(max_loss, 1.0)
+    ev_comp = _clamp(50 + ev_per_risk * 40)
+
     total = (
-        0.28 * profit_comp
-        + 0.24 * risk_comp
-        + 0.22 * edge_comp
-        + 0.12 * duration_comp
-        + 0.14 * wallet_comp
+        0.40 * ev_comp
+        + 0.18 * profit_comp
+        + 0.16 * risk_comp
+        + 0.12 * edge_comp
+        + 0.06 * duration_comp
+        + 0.08 * wallet_comp
         + live_bonus
         + consensus_bonus
     )
@@ -219,6 +233,9 @@ def score_signal(signal, wallet: float) -> dict[str, Any]:
 
     return {
         "score": round(total, 1),
+        "ev_rs": round(ev_rs, 2),
+        "ev_per_risk": round(ev_per_risk, 3),
+        "ev_ok": bool(ev.get("ok")),
         "profit_score": round(profit_comp, 1),
         "risk_score": round(risk_comp, 1),
         "edge_score": round(edge_comp, 1),
@@ -239,6 +256,7 @@ def score_signal(signal, wallet: float) -> dict[str, Any]:
         "wallet_fit_pct": round(fit_ratio * 100, 1),
         "affordable_lots": affordable_lots,
         "recommended_lots": 1 if is_fno else 0,
+        "unproven": is_fno,  # options score unproven until shadow unlock
     }
 
 
@@ -477,11 +495,15 @@ def score_option_row(
     volume: int = 0,
     oi: int = 0,
     otm: float = 0.0,
-    sl_pct: float = 0.35,
-    tgt_pct: float = 0.60,
+    sl_pct: float | None = None,
+    tgt_pct: float | None = None,
 ) -> dict[str, Any]:
     """Score a single wallet-fit option strike for Advisor top-5 (net of Groww charges)."""
     wallet = max(float(wallet), 1.0)
+    if sl_pct is None:
+        sl_pct = float(getattr(cfg, "FNO_PREMIUM_DROP_EXIT", 0.20))
+    if tgt_pct is None:
+        tgt_pct = float(getattr(cfg, "FNO_TARGET_PCT", 0.60))
     if ltp <= 0 or debit <= 0 or debit > wallet + 1e-6:
         return {"score": 0.0, "skip": True}
 

@@ -30,6 +30,18 @@ def _register(sched) -> None:
     )
     sched.add_job(wrap("orb_plans", jobs.orb_plans), CronTrigger(day_of_week="mon-fri", hour=9, minute=46))
     sched.add_job(
+        wrap("fno_practice_scan_0950", jobs.fno_practice_scan),
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=50),
+    )
+    sched.add_job(
+        wrap("fno_practice_scan_1130", jobs.fno_practice_scan),
+        CronTrigger(day_of_week="mon-fri", hour=11, minute=30),
+    )
+    sched.add_job(
+        wrap("option_mark_snapshot", jobs.option_mark_snapshot),
+        CronTrigger(day_of_week="mon-fri", hour="9-14", minute="*/5"),
+    )
+    sched.add_job(
         wrap("cancel_orb_reminder", jobs.cancel_orb_reminder),
         CronTrigger(day_of_week="mon-fri", hour=14, minute=0),
     )

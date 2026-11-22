@@ -189,31 +189,21 @@ def signals_partial(request):
                 s.data_as_of_label = timezone.localtime(s.data_as_of).strftime("%d-%b-%Y")
             except Exception:  # noqa: BLE001
                 s.data_as_of_label = str(s.data_as_of)[:10]
-        # Short human gate line (hide overnight noise)
+        # Short human gate line (plain language)
+        from dashboard.plain_language import plain_reasons
+
         gate_reasons = []
         if isinstance(s.gate, dict):
             gate_reasons = list(s.gate.get("blocked_by") or [])
-        soft = {"data too old", "outside entry window"}
+        soft = {"data too old", "outside entry window", "data_too_old", "outside_entry_window"}
         hard = [r for r in gate_reasons if r not in soft and not str(r).startswith("watch —")]
         if live_status == "expired":
-            s.gate_summary = "entry window closed"
+            s.gate_summary = "Entry window closed"
             s.skip_reason = s.skip_reason or "entry window closed"
         elif hard:
-            labels = []
-            for r in hard[:2]:
-                if "probability" in r or "prob/RR" in r:
-                    labels.append("low probability")
-                elif "Time Machine" in r:
-                    labels.append("no edge yet")
-                elif "max loss" in r:
-                    labels.append("risk too high")
-                elif "reward:risk" in r or "RR" in r:
-                    labels.append("RR too low")
-                else:
-                    labels.append(r)
-            s.gate_summary = " · ".join(dict.fromkeys(labels))
+            s.gate_summary = " · ".join(plain_reasons(hard, limit=2))
         elif gate_reasons:
-            s.gate_summary = "plan for next session"
+            s.gate_summary = "Plan for next session"
         else:
             s.gate_summary = ""
         # After 14:00: F&O same-day tickets leave actionable board
@@ -285,18 +275,34 @@ def signals_partial(request):
                 no_trade = "No F&O lot fits — show Normal ideas only, or sit out"
 
     ranked = ranked[: max(top_limit * 2, top_limit)]
-    # Stick only actionable board (not expired F&O)
-    try:
-        if stage_info["enter_ok"] or any(s.ticket_kind != "fno" for s in ranked):
-            mark_sticky_picks(ranked)
-    except Exception:  # noqa: BLE001
-        pass
+    # Sticky marking moved to scan path — partial is read-mostly
+    from dashboard.card_state import card_state_for_signal
+    from dashboard.glossary import TERMS
+    from portfolio.strategy_gates import unlock_progress
+
+    for s in ranked:
+        s.card_state = card_state_for_signal(s, entry_status=getattr(s, "entry_status", None))
+        meta = getattr(s, "rank_meta", None) or {}
+        s.display_ev = meta.get("ev_rs")
+        s.display_profit = meta.get("profit_rs")
+        s.display_loss = meta.get("max_loss_rs") or float(s.max_loss or 0)
+        s.display_charges = meta.get("charges_rs")
+        try:
+            s.loss_pct_wallet = round(float(s.display_loss) / max(wallet, 1) * 100, 1)
+        except Exception:  # noqa: BLE001
+            s.loss_pct_wallet = 0
 
     if stage_info.get("emphasize_tomorrow") and not ranked and not no_trade:
-        no_trade = "Session closed for new F&O — use Buy for tomorrow"
+        no_trade = "Session closed for new options — use Buy for tomorrow"
 
     n_count = sum(1 for s in ranked if s.ticket_kind != "fno")
     f_count = sum(1 for s in ranked if s.ticket_kind == "fno")
+    empty_explain = no_trade
+    if not ranked and not no_trade:
+        empty_explain = (
+            "No Ready tickets. Stock ideas often fail when Groww charges exceed the target profit "
+            "at this wallet size. Options stay practice-only until measured results unlock them."
+        )
 
     try:
         return render(
@@ -310,10 +316,12 @@ def signals_partial(request):
                 "top_n": top_limit or TOP_N,
                 "normal_count": n_count,
                 "fno_count": f_count,
-                "no_trade": no_trade,
+                "no_trade": empty_explain,
                 "regime": regime,
                 "open_positions": open_positions,
                 "session_stage": stage_info,
+                "glossary": TERMS,
+                "fno_unlock": unlock_progress("fno"),
             },
         )
     except Exception as exc:  # noqa: BLE001
@@ -416,6 +424,30 @@ def positions_page(request):
         row["pos"] = p
         if "status" not in row:
             row["status"] = p.status
+        try:
+            from portfolio.live import qty_units
+
+            entry = float(p.entry_price)
+            stop = float(p.stop)
+            units = int(qty_units(p))
+            row["loss_at_stop"] = round(abs(entry - stop) * units, 2)
+        except Exception:  # noqa: BLE001
+            row["loss_at_stop"] = None
+        mgmt = row.get("management") or (row.get("suggestion") or {})
+        code = (mgmt.get("code") if isinstance(mgmt, dict) else None) or (
+            (row.get("suggestion") or {}).get("code") if isinstance(row.get("suggestion"), dict) else None
+        )
+        new_sl = None
+        if isinstance(mgmt, dict):
+            new_sl = mgmt.get("new_stop") or mgmt.get("suggested_stop")
+        if new_sl:
+            row["advice"] = f"Raise stop to ₹{new_sl}"
+        elif code in {"EXIT_NOW", "SELL"}:
+            row["advice"] = "Exit now — do not hold into a deeper loss"
+        elif code in {"TIGHTEN", "MOVE_SL"}:
+            row["advice"] = "Tighten stop toward entry"
+        else:
+            row["advice"] = ""
         enriched.append(row)
     live_by_id = {int(r["id"]): r for r in enriched if r.get("id") is not None}
     day_book = build_day_book(day, live_by_id=live_by_id)
@@ -562,29 +594,15 @@ def research_report(request, run_id: int):
     return FileResponse(resolved.open("rb"), content_type="text/html")
 
 
-def calls_page(request):
-    """Combined multi-model calls board for today."""
+def _calls_ranked(today=None):
     from django.utils import timezone
 
-    from dashboard.groww import groww_links_for_signal
-    from signals.session_stage import apply_live_entry_status
-
-    today = timezone.localdate()
+    today = today or timezone.localdate()
     signals = list(
         Signal.objects.filter(created_at__date=today)
         .select_related("instrument")
         .order_by("-probability", "-created_at")[:40]
     )
-    for s in signals:
-        try:
-            apply_live_entry_status(s)
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            s.groww = groww_links_for_signal(s)
-        except Exception:  # noqa: BLE001
-            s.groww = {}
-
     ranked = []
     for s in signals:
         pipe = s.pipeline or {}
@@ -611,14 +629,62 @@ def calls_page(request):
                 "reason": cs.get("reason") or cs.get("badge") or "",
             }
         )
+    return signals, ranked
 
+
+def calls_page(request):
+    """Legacy Calls page — kept for tests; UI redirects to Results → votes."""
+    signals, ranked = _calls_ranked()
     return render(
         request,
         "dashboard/calls.html",
+        {"signals": signals, "ranked": ranked, "allow_dead_content": True},
+    )
+
+
+def results_page(request):
+    """Practice results, model health, backtest, votes, blocked."""
+    from django.utils import timezone
+
+    from dashboard.plain_language import plain_reasons
+    from evidence.stats import fno_unlock_status, kind_stats
+    from ml import registry
+    from portfolio.strategy_gates import unlock_progress
+
+    tab = (request.GET.get("tab") or "practice").lower()
+    if tab not in {"practice", "model", "backtest", "votes", "blocked"}:
+        tab = "practice"
+    today = timezone.localdate()
+    signals, ranked = _calls_ranked(today)
+    blocked = []
+    for s in Signal.objects.filter(created_at__date=today).select_related("instrument")[:60]:
+        gate = s.gate if isinstance(s.gate, dict) else {}
+        if gate.get("result") == "PASS":
+            continue
+        reasons = plain_reasons(gate.get("blocked_by") or [], limit=2)
+        blocked.append(
+            {
+                "symbol": s.instrument.symbol,
+                "reason": " · ".join(reasons) or (s.skip_reason or "Blocked"),
+            }
+        )
+    champ = registry.champion("swing_lgbm")
+    model_metrics = champ.metrics if champ and isinstance(champ.metrics, dict) else None
+    return render(
+        request,
+        "dashboard/results.html",
         {
-            "signals": signals,
+            "tab": tab,
+            "stocks_stats": kind_stats("stocks"),
+            "opts_stats": kind_stats("options"),
+            "fno_unlock": fno_unlock_status(),
+            "model_metrics": model_metrics,
             "ranked": ranked,
+            "signals": signals,
+            "blocked": blocked,
+            "backtest_summary": "",
             "allow_dead_content": True,
+            "stocks_unlock": unlock_progress("stocks"),
         },
     )
 

@@ -85,6 +85,7 @@ COOLING_OFF_HOURS = 24
 MAX_LOSS_FLOOR_BUFFER = 1.0  # ₹ slack when checking next life floor
 RESULTS_WARN_DAYS = 2  # results within N days → warn CNC / block F&O
 RETRAIN_MIN_SAMPLES = 30
+META_BLOCK_MIN_SAMPLES = 100  # meta filter cannot soft-block until this many reviews
 # Soft gate: block NEW signals when meta P(win) is below this (only if champion exists)
 META_MIN_WIN_PROB = 0.42
 ALIVE_TOP_N = 3
@@ -95,10 +96,18 @@ SQUARE_OFF_WARN_MIN = 10
 # Open-position adverse exit (advisor / management) — do not HOLD into deep losses
 # Options: exit when adverse R hits this, or premium falls this fraction from entry
 ADVERSE_R_EXIT = -0.50
-FNO_PREMIUM_DROP_EXIT = 0.20  # 20% premium decay from entry → EXIT_NOW
+FNO_PREMIUM_DROP_EXIT = 0.20  # 20% premium decay from entry → EXIT_NOW / ticket SL
 # Soft cut: model votes SELL when progress this negative (fraction of entry→target)
 ADVERSE_PROGRESS_SELL = -0.25
 FNO_PNL_PCT_SELL = -15.0  # gross open P&L % of invested
+FNO_TARGET_PCT = 0.60  # +60% premium target on debit options
+FNO_MAX_LOSS_PCT = 0.25  # after unlock: max loss at stop ≤ 25% of equity
+FNO_UNLOCK_MIN_TRADES = 40
+FNO_UNLOCK_MIN_SESSIONS = 15
+STOCKS_UNLOCK_MIN_TRADES = 60
+STOCKS_UNLOCK_MIN_SESSIONS = 15
+EV_MIN_RS = 5.0  # minimum expected rupees after charges to emit Ready
+GROWW_DP_CHARGE_RS = 20.0  # demat debit on CNC sell (before GST); override via Settings
 
 # India VIX / NIFTY regime thresholds
 VIX_HIGH = 18.0

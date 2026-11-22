@@ -2,10 +2,57 @@
 {% block title %}Settings — StockScope{% endblock %}
 {% block content %}
 <h1>Settings</h1>
-<p class="muted">Risk limits, live data token, and F&amp;O watchlist (always analyze these underlyings).</p>
+<p class="muted">Safety first. Then options practice, charges, live data, and advanced models.</p>
+
+<div class="card" style="margin-bottom:1rem;border-color:var(--amber)">
+  <h3 style="margin:0 0 0.75rem">Safety</h3>
+  <div class="row" style="gap:0.75rem;align-items:center">
+    <label class="row" style="gap:0.4rem">
+      <input type="checkbox" id="kill-toggle" {% if portfolio.kill_switch %}checked{% endif %} />
+      Kill switch {% if portfolio.kill_switch %}<span class="chip danger">ON</span>{% else %}<span class="chip ok">OFF</span>{% endif %}
+    </label>
+    <button type="button" id="btn-kill-confirm" class="secondary">Apply kill switch</button>
+    <span id="kill-status" class="muted"></span>
+  </div>
+  <p class="muted" style="font-size:0.85rem;margin:0.5rem 0 0">
+    Lockout: {% if lockout_active %}active until {{ lockout_until }}{% else %}none{% endif %}
+    · Life: {{ portfolio.life_status }} · Equity ₹{{ portfolio.equity }}
+  </p>
+  <hr style="border-color:var(--line);margin:1rem 0" />
+  <h4 style="margin:0 0 0.5rem">Typed reset</h4>
+  <p class="muted" style="font-size:0.85rem">Type <code>RESET</code> to confirm restoring equity/cash (staff recovery after DEAD).</p>
+  <form id="reset-life-safe" class="row" onsubmit="return false;">
+    <input name="equity" type="number" step="0.01" value="{{ cfg.CAPITAL }}" placeholder="Equity ₹" />
+    <input name="cash" type="number" step="0.01" value="{{ cfg.CAPITAL }}" placeholder="Cash ₹" />
+    <input id="reset-confirm-text" type="text" placeholder="Type RESET" style="width:8rem" />
+    <button type="button" id="btn-typed-reset" class="danger">Reset wallet</button>
+    <span id="reset-status" class="muted"></span>
+  </form>
+</div>
 
 <div class="card" style="margin-bottom:1rem">
-  <h3 style="margin:0 0 0.75rem">F&amp;O watchlist</h3>
+  <h3 style="margin:0 0 0.75rem">Options practice</h3>
+  <p class="muted" style="font-size:0.88rem;margin:0 0 0.5rem">
+    Options stay practice-only until the shadow book unlocks them
+    ({{ cfg.FNO_UNLOCK_MIN_TRADES }} trades / {{ cfg.FNO_UNLOCK_MIN_SESSIONS }} sessions, avg net &gt; 0, 90% interval above 0).
+    After unlock, loss at stop is capped at {{ cfg.FNO_MAX_LOSS_PCT }} of equity.
+  </p>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin:0 0 0.75rem">Charges</h3>
+  <div class="kv">
+    <span>DP charge (base ₹)</span><span>{{ cfg.GROWW_DP_CHARGE_RS }} + GST</span>
+    <span>Min net profit</span><span>₹{{ cfg.MIN_NET_PROFIT_RS }}</span>
+    <span>EV minimum</span><span>₹{{ cfg.EV_MIN_RS }}</span>
+  </div>
+  <p class="muted" style="font-size:0.85rem;margin:0.5rem 0 0">
+    At wallet ₹{{ wallet_amount }}, delivery sells pay DP — if charges exceed target profit, stock ideas are skipped with a plain reason.
+  </p>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin:0 0 0.75rem">Options watchlist</h3>
   <p class="muted" style="margin-top:0">Select one or more underlyings. Signals → F&amp;O will analyze <strong>all selected</strong> when you click Analyze watchlist (and optionally on page load).</p>
   <div id="fno-catalog" class="watch-grid"></div>
   <div class="row" style="margin-top:0.9rem;gap:0.75rem">
@@ -291,6 +338,44 @@ document.getElementById('btn-save-models').addEventListener('click', async funct
   } else {
     st.textContent = data.error || 'Save failed';
   }
+});
+
+document.getElementById('btn-kill-confirm')?.addEventListener('click', async function () {
+  const on = document.getElementById('kill-toggle').checked;
+  if (on && !confirm('Turn kill switch ON? No new Ready tickets until you turn it off.')) return;
+  if (!on && !confirm('Turn kill switch OFF?')) return;
+  const st = document.getElementById('kill-status');
+  st.textContent = 'Saving…';
+  const resp = await fetch('/api/portfolio/kill-switch/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({ on: on }),
+  });
+  const data = await resp.json();
+  st.textContent = data.kill_switch ? 'Kill switch ON' : 'Kill switch OFF';
+  location.reload();
+});
+
+document.getElementById('btn-typed-reset')?.addEventListener('click', async function () {
+  const form = document.getElementById('reset-life-safe');
+  const typed = (document.getElementById('reset-confirm-text').value || '').trim();
+  if (typed !== 'RESET') {
+    document.getElementById('reset-status').textContent = 'Type RESET exactly to confirm';
+    return;
+  }
+  const st = document.getElementById('reset-status');
+  st.textContent = 'Resetting…';
+  const resp = await fetch('/api/portfolio/reset-life/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify({
+      equity: Number(form.equity.value),
+      cash: Number(form.cash.value || form.equity.value),
+    }),
+  });
+  const data = await resp.json();
+  st.textContent = data.ok === false ? (data.error || 'failed') : 'Reset done';
+  location.reload();
 });
 </script>
 {% endblock %}

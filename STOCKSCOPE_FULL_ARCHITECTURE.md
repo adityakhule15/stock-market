@@ -36,7 +36,19 @@ Related: [README.md](README.md) · design notes in [stockscope_india_project.md]
 - Collapsed F&O short-hold card → expand → copy levels for Groww.
 - Confirm: **Did you place this?** → fill price → opens a `Position` + `OrderFill` BUY leg; or Skip.
 
-### 2.2 Advisor (`/advisor/`)
+### 2.2 Coach (`/advisor/`) — formerly Advisor
+
+Practice-first options: SKIP on kill switch / lockout / DEAD; PRACTICE while `strategy_unlocked("fno")` is false. Shows loss-at-stop ₹ and % of wallet, plus trend-matching CALL/PUT note.
+
+### 2.2b Results (`/results/`)
+
+Tabs: Practice results (shadow unlock), Model health (honest OOS metrics), Backtest, Model votes, Blocked ideas. Legacy `/calls/`, `/models/`, `/backtest/`, `/blocked/` redirect here.
+
+### 2.2c Evidence / shadow book
+
+Every scanned idea is registered as a `ShadowTrade`. Options practice scans at 09:50 / 11:30; marks every 5 minutes; EOD stock resolution via the shared ticket simulator. Unlock when recommended trades clear bootstrap CI above zero.
+
+### 2.2d Advisor (legacy name kept in URLs)
 
 - Guided chat: pick NIFTY / BANKNIFTY → CALL/PUT → auto or live strike.
 - Returns **BUY or SKIP** sized to current wallet; shows live premium when data available.

@@ -123,18 +123,47 @@ def risk_gate(
     if o["capital_used"] > pos_cap + 1e-9:
         why.append("position too big for limit or cash")
     if o["rr_net"] < cfg_mod.MIN_RR:
-        why.append("net reward:risk below minimum")
+        why.append("rr_below_min")
+    # Expected rupees after charges — only when economics are present on the order
+    ev = o.get("ev") if isinstance(o.get("ev"), dict) else None
+    if ev is None and o.get("ev_rs") is not None:
+        ev = {
+            "ev_rs": float(o["ev_rs"]),
+            "ok": float(o["ev_rs"]) >= float(getattr(cfg_mod, "EV_MIN_RS", 5.0)),
+        }
+    elif ev is None and o.get("net_pnl") is not None and float(o.get("net_pnl") or 0) > 0:
+        from signals.ev import expected_rupees
+
+        ev = expected_rupees(
+            probability=float(o.get("probability") or 0),
+            win_rs=float(o.get("net_pnl") or 0),
+            loss_rs=float(o.get("max_loss") or 0),
+        )
+    if ev is not None and not ev.get("ok", True):
+        why.append(f"ev_below_min:{ev.get('ev_rs')}")
+    # Options loss cap after unlock (practice mode handled elsewhere)
+    if str(o.get("strategy") or "") == "fno_intraday" or o.get("is_option"):
+        try:
+            from portfolio.strategy_gates import strategy_unlocked
+
+            if strategy_unlocked("fno"):
+                cap = float(getattr(cfg_mod, "FNO_MAX_LOSS_PCT", 0.25)) * float(pf.equity)
+                if float(o.get("max_loss") or 0) > cap + 1e-9:
+                    why.append(f"fno_loss_cap:{cap:.0f}")
+        except Exception:  # noqa: BLE001
+            pass
     # Stale feed only matters while the market is open
     if session_open and data_age_min * 60 > cfg_mod.MAX_DATA_AGE_SEC:
         why.append("data too old — refresh feed before acting")
-    # F&O local TM uses NEUTRAL/WEAK/EDGE — only treat equity COIN_FLIP as hard skip here
+    # F&O local TM uses NEUTRAL/WEAK/UNPROVEN — only treat equity COIN_FLIP as hard skip here
     if tm.get("verdict") == "COIN_FLIP":
-        why.append("COIN FLIP — skip")
+        why.append("coin_flip")
     elif tm.get("mode") == "fno_local":
         if tm.get("verdict") == "WEAK":
-            why.append("F&O local edge weak")
-    elif tm.get("verdict") != "EDGE":
-        why.append("Time Machine: " + str(tm.get("verdict", "UNKNOWN")))
+            why.append("fno_score_weak")
+        # UNPROVEN / NEUTRAL do not hard-block; practice mode handles tradability
+    elif tm.get("verdict") not in {"EDGE", "UNPROVEN"}:
+        why.append("time_machine:" + str(tm.get("verdict", "UNKNOWN")))
     if float(o.get("probability", 1.0)) < pf.min_prob:
         why.append("probability below mode minimum")
     symbol = o.get("symbol", "")

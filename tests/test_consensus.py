@@ -24,7 +24,36 @@ def test_block_stays_block():
     assert applied["status"] == "skipped_already_blocked"
 
 
-def test_consensus_veto_on_strong_negative():
+def test_consensus_display_only_until_evidence(monkeypatch):
+    """With <100 resolved shadow trades, veto stays off (display-only)."""
+    applied = apply_consensus_filter(
+        gate_passed=True,
+        gate_reasons=[],
+        consensus={"score": -0.5, "n_models": 4, "agree_k": 0, "thin": False},
+    )
+    assert applied["passed"] is True
+    assert applied["consensus"].get("vetoed") is False
+
+
+def test_consensus_veto_on_strong_negative(monkeypatch):
+    class _QS:
+        def filter(self, *a, **k):
+            return self
+
+        def exclude(self, *a, **k):
+            return self
+
+        def count(self):
+            return 120
+
+    class _ST:
+        objects = _QS()
+
+    monkeypatch.setattr("evidence.models.ShadowTrade", _ST, raising=False)
+    # Patch the import site inside apply_consensus_filter
+    import evidence.models as em
+
+    monkeypatch.setattr(em, "ShadowTrade", _ST)
     applied = apply_consensus_filter(
         gate_passed=True,
         gate_reasons=[],

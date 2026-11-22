@@ -32,12 +32,15 @@ class Command(BaseCommand):
             self.stdout.write("Bootstrap (data + model)...")
             call_command("bootstrap", force_train=False)
 
-        # Auto-bootstrap lightly if no champion
+        # Auto-bootstrap if no champion or legacy (pre-honest) model
         try:
+            from marketdata.management.commands.bootstrap import _champion_needs_train
             from ml import registry
 
-            if registry.champion("swing_lgbm") is None:
-                self.stdout.write("No champion — running bootstrap...")
+            champ = registry.champion("swing_lgbm")
+            need, reason = _champion_needs_train(champ)
+            if need:
+                self.stdout.write(f"Model update needed ({reason}) — running bootstrap...")
                 call_command("bootstrap")
         except Exception as exc:  # noqa: BLE001
             self.stdout.write(self.style.WARNING(f"bootstrap check: {exc}"))

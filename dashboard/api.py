@@ -153,6 +153,8 @@ class SignalViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"ok": True, "skipped": True, "signal": SignalSerializer(signal).data})
         fill = request.data.get("fill_price")
         qty = request.data.get("qty")
+        practice = request.data.get("practice") in (True, "true", "1", 1, "yes")
+        is_dummy = practice or request.data.get("is_dummy") in (True, "true", "1", 1, "yes")
         try:
             pos = mark_signal_taken(
                 signal,
@@ -160,6 +162,7 @@ class SignalViewSet(viewsets.ReadOnlyModelViewSet):
                 fill_price=float(fill) if fill is not None else None,
                 qty=int(qty) if qty is not None else None,
                 order_confirmed=True,
+                is_dummy=bool(is_dummy),
             )
         except ValueError as exc:
             return Response({"ok": False, "error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

@@ -93,11 +93,22 @@ def build_order(
     gross = abs(t1 - trig) * qty
     net = float(econ["net_pnl"])
     # Hard rule: never suggest a target that loses money after Groww charges
-    if not ignore_edge_filters and (not econ["net_ok"] or net <= 0):
+    charges_eat_edge = costs >= gross and gross > 0
+    if not ignore_edge_filters and (not econ["net_ok"] or net <= 0 or charges_eat_edge):
         return None
     rr_net = net / (R * qty + costs) if (R * qty + costs) > 0 else 0.0
-    if not ignore_edge_filters and rr_net < cfg_mod.MIN_RR:
+    max_loss = round(R * qty + float(econ["buy"]["total"]), 2)
+    from signals.ev import expected_rupees
+
+    ev = expected_rupees(probability=prob, win_rs=net, loss_rs=max_loss, charges_rs=0.0)
+    if not ignore_edge_filters and not ev["ok"]:
         return None
+    # Keep MIN_RR as a soft secondary bar when EV is borderline
+    if not ignore_edge_filters and rr_net < cfg_mod.MIN_RR and ev["ev_rs"] < float(getattr(cfg_mod, "EV_MIN_RS", 5.0)) * 2:
+        return None
+    tip = econ.get("tip") or ""
+    if charges_eat_edge or (gross > 0 and costs > gross):
+        tip = f"charges ₹{costs:.0f} > target profit ₹{gross:.0f}"
     return dict(
         side=side,
         entry_trigger=trig,
@@ -109,7 +120,7 @@ def build_order(
         target2=t2,
         qty=qty,
         capital_used=round(trig * qty + float(econ["buy"]["total"]), 2),
-        max_loss=round(R * qty + float(econ["buy"]["total"]), 2),
+        max_loss=max_loss,
         rr_net=round(rr_net, 2),
         probability=round(prob, 3),
         product=cfg_mod.PRODUCT,
@@ -117,7 +128,10 @@ def build_order(
         net_pnl=round(net, 2),
         charges_total=round(costs, 2),
         breakeven_sell=econ["breakeven_sell"],
-        economics=econ,
+        economics={**econ, "tip": tip or econ.get("tip", ""), "charges_eat_edge": charges_eat_edge},
+        charges_eat_edge=charges_eat_edge,
+        ev_rs=ev["ev_rs"],
+        ev=ev,
     )
 
 

@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 META_NAME = "meta_filter"
 
+# Pre-trade features only — no post-trade mistake tags / followed_plan
 FEATURE_KEYS = (
     "hour",
     "prob",
@@ -23,12 +24,8 @@ FEATURE_KEYS = (
     "setup_flag",
     "setup_oversold",
     "is_fno",
-    "followed_plan",
-    "had_mistakes",
-    "mistake_chased",
-    "mistake_ignored_sl",
-    "mistake_oversized",
-    "mistake_revenge",
+    "rr_net",
+    "ev_rs",
 )
 
 
@@ -43,9 +40,10 @@ def _feat_from_review(r) -> list[float]:
     tag = regime.get("tag", "range")
     setup = ((pipe.get("scanner") or {}).get("setup") or "") if pipe else ""
     is_fno = 1.0 if sig and ("fno" in (sig.strategy or "") or sig.product == "NRML") else 0.0
-    tags = {str(t).lower() for t in (r.mistake_tags or [])}
-    # Exclude "followed correctly" from mistake count
-    real_mistakes = {t for t in tags if t != "followed_signal_correctly"}
+    rr = float(sig.rr_net) if sig else 0.0
+    ev = 0.0
+    if sig and isinstance(sig.reasons, dict):
+        ev = float((sig.reasons.get("ev_rs") or 0) or 0)
     return [
         float(hour),
         prob,
@@ -56,17 +54,13 @@ def _feat_from_review(r) -> list[float]:
         1.0 if setup == "bull_flag" else 0.0,
         1.0 if setup == "oversold_bounce" else 0.0,
         is_fno,
-        1.0 if r.followed_plan else 0.0,
-        1.0 if real_mistakes else 0.0,
-        1.0 if "chased" in tags else 0.0,
-        1.0 if "ignored_sl" in tags else 0.0,
-        1.0 if "oversized" in tags else 0.0,
-        1.0 if "revenge_trade" in tags else 0.0,
+        rr,
+        ev,
     ]
 
 
 def features_from_order(order: dict, *, regime: dict | None = None) -> list[float]:
-    """Live feature vector for an order dict (pre-trade; mistake flags = 0)."""
+    """Live feature vector for an order dict (pre-trade only)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -91,12 +85,8 @@ def features_from_order(order: dict, *, regime: dict | None = None) -> list[floa
         1.0 if setup == "bull_flag" else 0.0,
         1.0 if setup == "oversold_bounce" else 0.0,
         is_fno,
-        1.0,  # assume plan followed until proven otherwise
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
+        float(order.get("rr_net") or 0),
+        float(order.get("ev_rs") or 0),
     ]
 
 
@@ -276,21 +266,27 @@ def load_meta_champion() -> dict | None:
 
 
 def predict_meta_win_prob(order: dict, *, regime: dict | None = None) -> float | None:
-    """P(win) from champion meta filter, or None if unavailable."""
+    """P(win) from champion meta filter, or None if unavailable / too few samples.
+
+    Soft-blocks only after ≥100 reviewed trades (RETRAIN_MIN_SAMPLES raised via
+    META_BLOCK_MIN_SAMPLES).
+    """
+    min_block = int(getattr(cfg, "META_BLOCK_MIN_SAMPLES", 100))
+    built = _rows_from_reviews(min_n=1)
+    if not built or len(built[1]) < min_block:
+        return None  # do not soft-block until enough evidence
     bundle = load_meta_champion()
     if not bundle or "clf" not in bundle:
         return None
     clf = bundle["clf"]
     keys = bundle.get("feature_keys") or FEATURE_KEYS
     feat = features_from_order(order, regime=regime)
-    # Pad/trim if feature schema drifted
     if len(feat) < len(keys):
         feat = feat + [0.0] * (len(keys) - len(feat))
     elif len(feat) > len(keys):
         feat = feat[: len(keys)]
     try:
         proba = clf.predict_proba(np.asarray([feat], dtype=float))[0]
-        # class 1 = win
         classes = list(getattr(clf, "classes_", [0, 1]))
         if 1 in classes:
             return float(proba[classes.index(1)])

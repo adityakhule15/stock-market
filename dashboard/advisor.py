@@ -9,18 +9,58 @@ from portfolio.models import PortfolioSettings
 
 
 def wallet_now() -> dict:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    IST = ZoneInfo("Asia/Kolkata")
     ps = PortfolioSettings.get_solo()
     equity = float(ps.equity)
     cash = float(ps.cash)
     cap = float(cfg.CAPITAL)
     usable = min(equity, cash, cap)
+    lockout_active = False
+    if ps.lockout_until:
+        until = ps.lockout_until
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=IST)
+        lockout_active = until.astimezone(IST) > datetime.now(IST)
     return {
         "equity": round(equity, 2),
         "cash": round(cash, 2),
         "wallet": round(usable, 2),
         "hard_cap": cap,
         "life_status": ps.life_status,
+        "kill_switch": bool(ps.kill_switch),
+        "lockout_active": lockout_active,
     }
+
+
+def _trend_note(symbol: str, side: str) -> str:
+    """Plain sentence: whether CALL/PUT matches underlying vs EMA50."""
+    try:
+        from features.indicators import add_indicators
+        from marketdata.service import MarketDataService
+        from signals.tasks import FNO_YF_MAP
+
+        yf_sym = FNO_YF_MAP.get(symbol.upper()) or f"{symbol}.NS"
+        svc = MarketDataService()
+        df = svc.bars_df(yf_sym, interval="1d")
+        if df is None or len(df) < 60:
+            df, _ = svc.history(yf_sym, interval="1d", period="6mo")
+        if df is None or len(df) < 50:
+            return "Trend unknown (not enough price history)."
+        ind = add_indicators(df)
+        spot = float(ind["close"].iloc[-1])
+        ema50 = float(ind["ema50"].iloc[-1])
+        above = spot > ema50
+        matches = (side == "CE" and above) or (side == "PE" and not above)
+        side_label = "CALL" if side == "CE" else "PUT"
+        base = f"{symbol} above 50-day average" if above else f"{symbol} below 50-day average"
+        if matches:
+            return f"{base}: {side_label} matches trend."
+        return f"{base}: {side_label} is counter-trend."
+    except Exception:  # noqa: BLE001
+        return "Trend check unavailable."
 
 
 STEPS = [
@@ -387,12 +427,28 @@ def _recommend(answers: dict, w: dict, live: dict | None) -> dict:
 
     fits = debit <= wallet + 1e-6 and ltp > 0
     price_ok = pricing in {"LIVE_NSE", "LIVE_INDSTOCKS", "GROWW_PASTE"} and ltp > 0
-    sl_ltp = round(ltp * 0.65, 2) if ltp > 0 else 0.0
-    tgt_ltp = round(ltp * 1.60, 2) if ltp > 0 else 0.0
+    sl_pct = float(getattr(cfg, "FNO_PREMIUM_DROP_EXIT", 0.20))
+    tgt_pct = float(getattr(cfg, "FNO_TARGET_PCT", 0.60))
+    sl_ltp = round(ltp * (1.0 - sl_pct), 2) if ltp > 0 else 0.0
+    tgt_ltp = round(ltp * (1.0 + tgt_pct), 2) if ltp > 0 else 0.0
     loss = round(debit - sl_ltp * lot, 2) if ltp > 0 else 0.0
     profit = round(tgt_ltp * lot - debit, 2) if ltp > 0 else 0.0
+    equity = float(w.get("equity") or wallet)
+    loss_pct_wallet = (loss / equity * 100.0) if equity > 0 else 0.0
+    trend = _trend_note(symbol, side)
 
-    if not price_ok:
+    from portfolio.strategy_gates import strategy_unlocked
+
+    if w.get("life_status") == "dead":
+        verdict = "SKIP"
+        reason = "Wallet is at the stop-trading floor — no new ideas until a reset."
+    elif w.get("kill_switch"):
+        verdict = "SKIP"
+        reason = "Kill switch is ON — turn it off in Settings before any new idea."
+    elif w.get("lockout_active"):
+        verdict = "SKIP"
+        reason = "Cooling-off lockout is active after consecutive losses — sit out."
+    elif not price_ok:
         verdict = "SKIP"
         reason = (
             "No trusted price (paste Groww LTP or wait for LIVE NSE). "
@@ -402,14 +458,22 @@ def _recommend(answers: dict, w: dict, live: dict | None) -> dict:
         verdict = "SKIP"
         reason = (
             f"1 lot costs ₹{debit:.2f} (LTP ₹{ltp:.2f} × {lot}) which is above wallet ₹{wallet:.0f}. "
-            "Pick a cheaper OTM strike or use Normal equity / NIFTY."
+            "Pick a cheaper OTM strike or use Stocks (delivery)."
+        )
+    elif not strategy_unlocked("fno"):
+        verdict = "PRACTICE"
+        tag = "Groww paste" if pricing == "GROWW_PASTE" else "LIVE NSE"
+        reason = (
+            f"{tag} fits wallet (₹{debit:.2f} ≤ ₹{wallet:.0f}) but options are practice-only "
+            "until the shadow book proves they make money after charges. "
+            f"Same-day only — square off by 15:10 IST. {trend}"
         )
     else:
         verdict = "BUY"
         tag = "Groww paste" if pricing == "GROWW_PASTE" else "LIVE NSE"
         reason = (
             f"{tag} fit: debit ₹{debit:.2f} ≤ ₹{wallet:.0f}. "
-            f"Same-day only — square off by 15:10 IST."
+            f"Same-day only — square off by 15:10 IST. {trend}"
         )
 
     top_lines = []
@@ -421,11 +485,13 @@ def _recommend(answers: dict, w: dict, live: dict | None) -> dict:
             f"+₹{m.get('profit_rs','?')} / risk ₹{m.get('loss_rs','?')}"
         )
     top_block = ("\nTop wallet-fit:\n" + "\n".join(top_lines)) if top_lines else ""
+    loss_line = f"Loss at stop ₹{loss:.2f} ({loss_pct_wallet:.0f}% of wallet)"
 
     bot = (
         f"**{verdict}** {symbol} {int(strike) if strike else 0} {side}\n"
         f"Pricing: {pricing} · LTP ₹{ltp:.2f} · 1 lot ({lot}) debit ₹{debit:.2f}\n"
-        f"SL sell ₹{sl_ltp:.2f} (loss ≈ ₹{loss:.2f}) · Target ₹{tgt_ltp:.2f} (profit ≈ ₹{profit:.2f})\n"
+        f"SL sell ₹{sl_ltp:.2f} ({loss_line}) · Target ₹{tgt_ltp:.2f} (profit ≈ ₹{profit:.2f})\n"
+        f"{trend}\n"
         f"Wallet ₹{wallet:.0f}\n{reason}{top_block}"
     )
 
@@ -448,8 +514,10 @@ def _recommend(answers: dict, w: dict, live: dict | None) -> dict:
             "sl_ltp": sl_ltp,
             "target_ltp": tgt_ltp,
             "loss_rs": loss,
+            "loss_pct_wallet": round(loss_pct_wallet, 1),
             "profit_rs": profit,
             "pricing": pricing,
+            "trend": trend,
             "wait": "09:46–14:00 IST",
             "square_off": "15:10 IST same day",
             "reason": reason,

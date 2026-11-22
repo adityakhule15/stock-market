@@ -40,30 +40,55 @@ FEATURE_COLS = [
 
 
 def build_features(df: pd.DataFrame, market_ctx: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Build features available at signal time — shift by 1 bar (no look-ahead)."""
+    """Build features available at signal time (close of bar t → decide for t+1).
+
+    No extra shift: labels already require the *next* session for entry, so
+    features on row t are known at the close of t.
+    """
     ind = add_indicators(df)
     feats = ind[FEATURE_COLS].copy()
     if market_ctx is not None and not market_ctx.empty:
         m = market_ctx.reindex(ind.index).ffill()
         for col in m.columns:
             feats[col] = m[col]
-    # Shift so row t only uses info known at close of t-1 / available at t decision without future
-    feats = feats.shift(1)
     return feats
+
+
+def build_feature_row(
+    df: pd.DataFrame,
+    market_ctx: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Single-row feature matrix for the latest completed bar (live scoring)."""
+    feats = build_features(df, market_ctx=market_ctx)
+    if feats.empty:
+        return feats
+    return feats.iloc[[-1]].replace([float("inf"), float("-inf")], pd.NA).fillna(0.0)
 
 
 def build_dataset(
     df: pd.DataFrame,
     market_ctx: pd.DataFrame | None = None,
-    atr_mult_sl: float = 1.35,
-    rr: float = 1.5,
-    horizon: int = 8,
+    atr_mult_sl: float = 1.5,
+    rr: float = 2.0,
+    horizon: int = 5,
+    *,
+    include_market: bool = True,
 ) -> pd.DataFrame:
+    if market_ctx is None and include_market:
+        try:
+            from features.market import build_market_ctx, load_market_frames, relative_strength
+
+            nifty, vix = load_market_frames()
+            market_ctx = build_market_ctx(df.index, nifty=nifty, vix=vix)
+            rs = relative_strength(df["close"].astype(float), nifty)
+            market_ctx = market_ctx.copy()
+            market_ctx["rel_strength_20"] = rs
+        except Exception:  # noqa: BLE001
+            market_ctx = None
     feats = build_features(df, market_ctx=market_ctx)
     y = triple_barrier(df, atr_mult_sl=atr_mult_sl, rr=rr, horizon=horizon)
     out = feats.copy()
     out["y"] = y
-    # Attach raw context useful for orders
     ind = add_indicators(df)
     out["close"] = df["close"]
     out["high"] = df["high"]
@@ -72,13 +97,18 @@ def build_dataset(
     out["ema50"] = ind["ema50"]
     out["prev_high"] = df["high"].shift(1)
     out["prev_low"] = df["low"].shift(1)
-    out = out.dropna(subset=["y"] + [c for c in FEATURE_COLS if c in out.columns])
+    feat_cols = [c for c in FEATURE_COLS if c in out.columns]
+    out = out.dropna(subset=["y"] + feat_cols)
     return out
 
 
 def feature_matrix(dataset: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     cols = [c for c in FEATURE_COLS if c in dataset.columns]
-    extra = [c for c in dataset.columns if c.startswith("nifty_") or c.startswith("vix_")]
+    extra = [
+        c
+        for c in dataset.columns
+        if c.startswith("nifty_") or c.startswith("vix_") or c.startswith("rel_") or c == "breadth_up"
+    ]
     cols = cols + extra
     X = dataset[cols].replace([float("inf"), float("-inf")], pd.NA).fillna(0.0)
     y = dataset["y"].astype(int)

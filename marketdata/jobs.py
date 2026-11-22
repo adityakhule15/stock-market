@@ -94,7 +94,36 @@ def eod_ingest():
     svc = MarketDataService()
     results = svc.backfill_many(shortlist_symbols(50), years=1)
     record_equity_snapshot()
-    return f"ok={sum(1 for v in results.values() if v)}"
+    shadow_n = 0
+    try:
+        from evidence.services import maybe_learn_consensus_weights, resolve_options_shadow, resolve_stocks_shadow
+
+        shadow_n = resolve_stocks_shadow()
+        resolve_options_shadow(force_time_exit=True)
+        maybe_learn_consensus_weights()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("shadow resolve: %s", exc)
+    return f"ok={sum(1 for v in results.values() if v)} shadow_stocks={shadow_n}"
+
+
+def fno_practice_scan():
+    """09:50 / 11:30 — practice-scan F&O watchlist for shadow book."""
+    from portfolio.models import PortfolioSettings
+    from signals.tasks import generate_fno_for_underlyings
+
+    ps = PortfolioSettings.get_solo()
+    names = list(ps.fno_watchlist or ["NIFTY", "BANKNIFTY"])
+    created = generate_fno_for_underlyings(names)
+    return f"fno_practice={len(created)} underlyings={len(names)}"
+
+
+def option_mark_snapshot():
+    """Every 5m during session — snapshot option LTPs + resolve hits."""
+    from evidence.services import resolve_options_shadow, snapshot_option_marks
+
+    n = snapshot_option_marks()
+    r = resolve_options_shadow(force_time_exit=False)
+    return f"marks={n} resolved={r}"
 
 
 def agents_settle_memory():
@@ -144,10 +173,10 @@ def kronos_nightly():
 
 
 def nightly_retrain():
+    """Nightly: refresh data health + rollback check. Promotion is Saturday-only."""
     from ml.meta_filter import maybe_promote_meta
-    from ml.retrain import maybe_auto_rollback, retrain_and_maybe_promote
+    from ml.retrain import maybe_auto_rollback
 
-    mv, promoted = retrain_and_maybe_promote(full=False)
     rolled = maybe_auto_rollback()
     meta = {}
     try:
@@ -155,17 +184,25 @@ def nightly_retrain():
     except Exception as exc:  # noqa: BLE001
         logger.exception("meta retrain failed")
         meta = {"promoted": False, "reason": str(exc)[:200]}
-    return (
-        f"v{mv.version} promoted={promoted} rollback={rolled} "
-        f"meta_promoted={meta.get('promoted')} meta_n={meta.get('n', 0)} "
-        f"meta={meta.get('reason', '')[:80]}"
-    )
+    # Light candidate train without Optuna — save as candidate only (no promote)
+    try:
+        from ml.retrain import retrain_and_maybe_promote
+
+        mv, promoted = retrain_and_maybe_promote(full=False, retire_legacy=False)
+        # Force no promote on weeknights even if logic would
+        return (
+            f"nightly candidate v{mv.version} promoted={False} "
+            f"(weeknight save-only) rollback={rolled} "
+            f"meta_promoted={meta.get('promoted')} meta_n={meta.get('n', 0)}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return f"nightly data-only rollback={rolled} err={exc}"
 
 
 def weekly_retrain():
     from ml.retrain import retrain_and_maybe_promote
 
-    mv, promoted = retrain_and_maybe_promote(full=True, n_trials=20)
+    mv, promoted = retrain_and_maybe_promote(full=True, n_trials=20, retire_legacy=True)
     return f"v{mv.version} promoted={promoted}"
 
 

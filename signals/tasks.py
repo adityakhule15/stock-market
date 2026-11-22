@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from config import trading_config as cfg
 from config.trading_config import risk_params_for_equity
-from features.builders import build_dataset, feature_matrix
+from features.builders import build_dataset, build_feature_row, feature_matrix
 from features.indicators import add_indicators
 from marketdata.freshness import SignalBlocked, assert_fresh
 from marketdata.models import Instrument
@@ -65,33 +65,6 @@ def _levels_fn_factory(side: str):
         return order["entry_trigger"], order["sl_trigger"], order["target1"]
 
     return levels_fn
-
-
-def _tm_bundle(df, order: dict, side: str) -> dict:
-    sim = simulate(
-        df,
-        order["entry_trigger"],
-        order["sl_trigger"],
-        order["target1"],
-        horizon=5,
-        n=cfg.TM_SIMS,
-        seed=cfg.TM_SEED,
-    )
-    rep = replay(df, _setup_fn_factory(side), _levels_fn_factory(side), horizon=5)
-    cost_R = 0.0
-    if order["max_loss"] > 0:
-        costs = estimate_costs(
-            order["entry_trigger"] * order["qty"],
-            order["target1"] * order["qty"],
-            order["product"],
-            cfg.FEES,
-        )
-        cost_R = costs / order["max_loss"]
-    tm = {**sim, **verdict(sim, rep, cost_R, cfg), "replay": rep}
-    tm["replay_str"] = (
-        f"{rep['fires']} fires: {rep['target']} target, {rep['stop']} stop, {rep['neither']} neither"
-    )
-    return tm
 
 
 def _fno_opt_from_reasons(reasons: dict | None) -> str:
@@ -248,10 +221,21 @@ def generate_signals_for_universe(symbols: list[str] | None = None) -> list[Sign
                     logger.info("Stale data %s: %s", symbol, exc2)
                     continue
 
-            ds = build_dataset(df)
-            if ds.empty:
+            # Live features on latest completed bar (no double-shift staleness)
+            try:
+                from features.market import build_market_ctx, load_market_frames, relative_strength
+
+                nifty, vix = load_market_frames()
+                mctx = build_market_ctx(df.index, nifty=nifty, vix=vix)
+                mctx["rel_strength_20"] = relative_strength(df["close"].astype(float), nifty)
+            except Exception:  # noqa: BLE001
+                mctx = None
+            X = build_feature_row(df, market_ctx=mctx)
+            if X.empty:
                 continue
-            X, _ = feature_matrix(ds.iloc[[-1]])
+            # Align columns to champion
+            cols = bundle.get("feature_cols") or list(X.columns)
+            X = X.reindex(columns=cols, fill_value=0.0)
             try:
                 prob = float(predict_proba(bundle, X)[0])
             except OSError as exc:
@@ -261,10 +245,16 @@ def generate_signals_for_universe(symbols: list[str] | None = None) -> list[Sign
                     exc,
                 )
                 continue
-            row = ds.iloc[-1]
-            close = float(row["close"])
-            ema50 = float(row["ema50"])
-            atr = float(row["atr14"])
+            ind = add_indicators(df)
+            close = float(ind["close"].iloc[-1])
+            ema50 = float(ind["ema50"].iloc[-1])
+            atr = float(ind["atr14"].iloc[-1])
+            # Affordable universe: skip names that can't buy 1 share at max position
+            max_pos_rs = float(pf.equity) * float(cfg.MAX_POSITION_PCT)
+            if close > max_pos_rs + 1e-9:
+                continue
+            prev_high = float(df["high"].iloc[-2]) if len(df) > 1 else float(df["high"].iloc[-1])
+            prev_low = float(df["low"].iloc[-2]) if len(df) > 1 else float(df["low"].iloc[-1])
 
             if close > ema50:
                 bullish, side = True, "BUY"
@@ -281,8 +271,8 @@ def generate_signals_for_universe(symbols: list[str] | None = None) -> list[Sign
 
             # Anchor high/low to close so Groww price ≈ ticket (fixes stale prev_high gap)
             ctx = OrderContext(
-                prev_high=max(float(row["prev_high"]), close),
-                prev_low=min(float(row["prev_low"]), close),
+                prev_high=max(prev_high, close),
+                prev_low=min(prev_low, close),
                 atr=atr,
                 close=close,
                 ema50=ema50,
@@ -420,6 +410,12 @@ def generate_signals_for_universe(symbols: list[str] | None = None) -> list[Sign
             enqueue_model_review(signal_ids)
         except Exception as exc:  # noqa: BLE001
             logger.exception("model review enqueue skipped: %s", exc)
+        try:
+            from evidence.services import register_signals
+
+            register_signals(created)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("shadow register skipped: %s", exc)
 
     # F&O is on-demand from the F&O tab (user picks underlying) — not auto-dumped here
     return created
@@ -660,4 +656,10 @@ def _fno_option_tickets(
                 enqueue_callable("agents-review-fno", _review_fno)
         except Exception as exc:  # noqa: BLE001
             logger.exception("F&O model review enqueue skipped: %s", exc)
+        try:
+            from evidence.services import register_signals
+
+            register_signals(out)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("F&O shadow register skipped: %s", exc)
     return out

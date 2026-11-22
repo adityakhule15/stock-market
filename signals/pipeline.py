@@ -134,19 +134,19 @@ def run_pipeline(
         pipe["exit"] = exit_plan
 
     # 5 Time Machine — underlying candle bootstrap is for CNC/equity only.
-    # Option premiums ≠ index levels; local F&O probability owns the edge tag.
+    # Option premiums ≠ index levels; local F&O score is unproven (not EDGE).
     tm: dict[str, Any]
     if is_option:
         p = float(probability or 0)
         if p >= 0.58:
-            label = "EDGE"
+            label = "UNPROVEN"
         elif p >= 0.48:
             label = "NEUTRAL"
         else:
             label = "WEAK"
         tm = {
             "verdict": label,
-            "label": f"{label} — F&O local edge (prob {p:.2f})",
+            "label": f"{label} — options score {p:.2f} (not a measured probability)",
             "skip_recommended": label == "WEAK",
             "p_target": max(0.0, min(0.85, p)),
             "p_stop": max(0.0, min(0.85, 1.0 - p)),
@@ -154,6 +154,8 @@ def run_pipeline(
             "expected_R": round((p - (1.0 - p)) * 1.5, 3),
             "n": 0,
             "mode": "fno_local",
+            "score": p,
+            "unproven": True,
             "p_target_pct": round(100 * max(0.0, min(0.85, p)), 1),
             "p_stop_pct": round(100 * max(0.0, min(0.85, 1.0 - p)), 1),
             "p_neither_pct": 0.0,
@@ -172,6 +174,22 @@ def run_pipeline(
         if setup_fn and levels_fn:
             rep = replay(tm_bars, setup_fn, levels_fn, horizon=5)
         cost_R = 0.0
+        max_loss = float(order.get("max_loss") or 0)
+        if max_loss > 0:
+            try:
+                from portfolio.charges import trade_economics
+
+                eco = trade_economics(
+                    buy_price=float(order["entry_trigger"]),
+                    sell_price=float(order["target1"]),
+                    units=int(order.get("qty") or 1),
+                    product=str(order.get("product") or "CNC"),
+                    is_option=False,
+                    min_net_rs=0.0,
+                )
+                cost_R = float(eco["charges_total"]) / max_loss
+            except Exception:  # noqa: BLE001
+                cost_R = 0.0
         tm = {**sim, **verdict(sim, rep, cost_R, cfg_mod), "replay": rep, "n": int(sim.get("n", cfg_mod.TM_SIMS))}
         label = tm.get("verdict", "UNKNOWN")
         if label == "COIN_FLIP":
@@ -183,6 +201,7 @@ def run_pipeline(
         tm["p_target_pct"] = round(100 * float(tm.get("p_target", 0)), 1)
         tm["p_stop_pct"] = round(100 * float(tm.get("p_stop", 0)), 1)
         tm["p_neither_pct"] = round(100 * float(tm.get("p_neither", 0)), 1)
+        tm["cost_R"] = round(cost_R, 3)
     else:
         tm = {
             "verdict": "UNKNOWN",
@@ -245,13 +264,24 @@ def run_pipeline(
     if news.get("action") == "block":
         extra.append(news.get("reason", "news block"))
     if regime and regime.get("tag") == "high_vol" and intraday:
-        extra.append("market regime high-vol — skip intraday")
+        extra.append("regime_high_vol")
     if tm.get("verdict") == "COIN_FLIP" and not is_option:
-        extra.append("COIN FLIP — skip")
+        extra.append("coin_flip")
     if is_option and tm.get("skip_recommended"):
-        extra.append(tm.get("label") or "F&O weak local edge")
+        extra.append("fno_score_weak")
     if not bud.get("ok"):
-        extra.append(bud.get("reason", "budget failed"))
+        extra.append(bud.get("reason", "budget_failed") or "budget_failed")
+    # NIFTY regime: skip new stock longs when index below falling EMA50
+    if not is_option and side == "BUY":
+        try:
+            from features.market import nifty_long_ok
+
+            nifty_gate = nifty_long_ok(cfg_mod)
+            pipe["regime_nifty"] = nifty_gate
+            if not nifty_gate.get("ok", True):
+                extra.append("nifty_bear_skip_longs")
+        except Exception:  # noqa: BLE001
+            pass
     if extra:
         gate = GateResult(False, list(gate.reasons) + extra)
     pipe["gate"] = {

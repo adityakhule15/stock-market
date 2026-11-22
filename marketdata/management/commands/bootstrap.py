@@ -1,6 +1,8 @@
 """Prepare data + model so desktop launch is ready.
 
 Backfill runs ONLY when history is missing, too short, or stale.
+Train runs when there is no champion, the champion is legacy (pre-honest),
+or metrics look empty/overfit. Use --force-train to always retrain.
 """
 
 from __future__ import annotations
@@ -29,11 +31,31 @@ BOOTSTRAP_SYMBOLS = [
     "AXISBANK.NS",
     "RELIANCE.NS",
     "INFY.NS",
+    "PNB.NS",
+    "NMDC.NS",
+    "SAIL.NS",
+    "TATAPOWER.NS",
 ]
 
 
+def _champion_needs_train(champ) -> tuple[bool, str]:
+    if champ is None:
+        return True, "no champion model"
+    m = champ.metrics if isinstance(champ.metrics, dict) else {}
+    if not m.get("honest"):
+        return True, "legacy in-sample champion — need honest retrain"
+    if m.get("n_signals", 0) == 0:
+        return True, "champion has zero signals in metrics"
+    if float(m.get("auc") or 0) >= 0.99:
+        return True, "champion looks overfit (AUC ≥ 0.99)"
+    # Stale: no holdout metrics after overhaul
+    if m.get("expectancy_R") is None and m.get("holdout") is None:
+        return True, "champion missing honest holdout metrics"
+    return False, "champion OK"
+
+
 class Command(BaseCommand):
-    help = "Seed universe; backfill only if needed; train only if needed"
+    help = "Seed universe; migrate; backfill if needed; train/update model if needed"
 
     def add_arguments(self, parser):
         parser.add_argument("--years", type=int, default=3)
@@ -41,33 +63,39 @@ class Command(BaseCommand):
         parser.add_argument("--skip-backfill", action="store_true")
         parser.add_argument("--force-backfill", action="store_true", help="Always re-download history")
         parser.add_argument("--force-train", action="store_true")
+        parser.add_argument(
+            "--skip-train",
+            action="store_true",
+            help="Never train (migrate/backfill only)",
+        )
 
     def handle(self, *args, **options):
+        self.stdout.write("1/4 Migrate database…")
         ensure_seed_instruments()
         call_command("migrate", interactive=False, verbosity=0)
+        self.stdout.write(self.style.SUCCESS("   Migrations OK"))
 
         if options["skip_backfill"]:
-            self.stdout.write("Backfill skipped (--skip-backfill)")
+            self.stdout.write("2/4 Backfill skipped (--skip-backfill)")
         elif options["force_backfill"]:
-            symbols = ",".join(BOOTSTRAP_SYMBOLS)
-            self.stdout.write(f"Force backfill: {len(BOOTSTRAP_SYMBOLS)} symbols...")
-            call_command("backfill", years=options["years"], symbols=symbols)
+            self.stdout.write(f"2/4 Force backfill: {len(BOOTSTRAP_SYMBOLS)} symbols…")
+            call_command("backfill", years=options["years"], symbols=",".join(BOOTSTRAP_SYMBOLS))
         else:
             status = backfill_status_summary(BOOTSTRAP_SYMBOLS)
             if not status["needed"]:
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f"Backfill not needed — {status['ok_count']}/{len(BOOTSTRAP_SYMBOLS)} "
-                        "symbols already have enough fresh daily bars."
+                        f"2/4 Backfill not needed — {status['ok_count']}/{len(BOOTSTRAP_SYMBOLS)} "
+                        "symbols already fresh."
                     )
                 )
             else:
                 self.stdout.write(
-                    f"Backfill needed for {status['need_count']} symbol(s): "
+                    f"2/4 Backfill needed for {status['need_count']} symbol(s): "
                     f"{', '.join(status['need'][:12])}{'…' if status['need_count'] > 12 else ''}"
                 )
                 if status["ok_count"]:
-                    self.stdout.write(f"Already OK (skip): {status['ok_count']} symbols")
+                    self.stdout.write(f"   Already OK (skip): {status['ok_count']} symbols")
                 call_command(
                     "backfill",
                     years=options["years"],
@@ -75,23 +103,34 @@ class Command(BaseCommand):
                 )
 
         champ = registry.champion("swing_lgbm")
-        need_train = options["force_train"] or champ is None
-        if champ and not options["force_train"]:
-            m = champ.metrics or {}
-            if m.get("n_signals", 0) == 0 or m.get("auc", 0) >= 0.99:
-                need_train = True
-                self.stdout.write("Champion looks overfit/empty — forcing retrain")
+        need_train, reason = _champion_needs_train(champ)
+        if options["force_train"]:
+            need_train, reason = True, "forced by --force-train"
+        if options["skip_train"]:
+            need_train, reason = False, "skipped (--skip-train)"
 
         if need_train:
-            self.stdout.write("Training with chronological train/test split...")
-            call_command("train", mode="swing", full=options["full"], trials=15)
+            self.stdout.write(f"3/4 Training model ({reason})…")
+            # Honest train: retire legacy champions on first honest run
+            call_command(
+                "train",
+                mode="swing",
+                full=options["full"],
+                trials=15 if options["full"] else 10,
+                retire_legacy=True,
+            )
         else:
-            self.stdout.write(self.style.SUCCESS(f"Train not needed — champion OK: {champ}"))
+            self.stdout.write(self.style.SUCCESS(f"3/4 Train not needed — {reason}: {champ}"))
 
         champ = registry.champion("swing_lgbm")
         if champ:
+            m = champ.metrics if isinstance(champ.metrics, dict) else {}
+            honest = "honest" if m.get("honest") else "legacy"
             self.stdout.write(
-                self.style.SUCCESS(f"Ready: {champ.name}_v{champ.version}")
+                self.style.SUCCESS(
+                    f"4/4 Ready: {champ.name}_v{champ.version} ({honest}) "
+                    f"status={champ.status}"
+                )
             )
         else:
-            self.stdout.write(self.style.ERROR("No champion after bootstrap"))
+            self.stdout.write(self.style.ERROR("4/4 No champion after bootstrap — scans will be empty"))

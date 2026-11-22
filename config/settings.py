@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "notifications",
     "research",
     "forecast",
+    "evidence",
 ]
 
 MIDDLEWARE = [

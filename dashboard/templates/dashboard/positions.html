@@ -197,22 +197,30 @@
             {% if p.is_dummy %}→ Original{% else %}→ Dummy{% endif %}
           </button>
           {% if p.status == "open" %}
-          <button type="button" class="btn-ghost" data-act="advise" data-id="{{ p.id }}" title="Ask advisor HOLD or SELL">?</button>
-          <button type="button" class="btn-ghost" data-act="reanalyze" data-id="{{ p.id }}" title="Reanalyze">↻</button>
-          <button type="button" class="btn-ghost" data-act="edit" data-id="{{ p.id }}" title="Edit">✎</button>
-          <button type="button" class="btn-ghost danger" data-act="delete" data-id="{{ p.id }}" title="Delete">✕</button>
+          <button type="button" class="btn-ghost" data-act="advise" data-id="{{ p.id }}">Ask coach</button>
+          <button type="button" class="btn-ghost" data-act="reanalyze" data-id="{{ p.id }}">Reanalyze</button>
+          <button type="button" class="btn-ghost" data-act="edit" data-id="{{ p.id }}">Edit</button>
+          <button type="button" class="btn-ghost danger" data-act="delete" data-id="{{ p.id }}">Delete</button>
           {% endif %}
         </div>
         {% if p.status == "open" %}
         <div class="advise-box muted" id="advise-{{ p.id }}" style="font-size:0.75rem;margin-top:0.35rem;max-width:14rem;white-space:pre-wrap"></div>
         <div class="act-close">
-          <input id="exit-{{ p.id }}" type="number" step="0.05" value="{% if row.ltp %}{{ row.ltp }}{% else %}{{ p.target }}{% endif %}" title="Exit LTP" />
-          <select id="reason-{{ p.id }}">
-            <option value="manual">Exit</option>
-            <option value="target">Target</option>
-            <option value="stop">SL</option>
-          </select>
-          <button type="button" class="btn-close" data-act="close" data-id="{{ p.id }}">Square off</button>
+          {% if row.loss_at_stop != None %}
+          <div class="muted" style="font-size:0.78rem;width:100%">Loss if stop hits ≈ ₹{{ row.loss_at_stop }}{% if row.advice %} · {{ row.advice }}{% endif %}</div>
+          {% endif %}
+          <button type="button" class="btn-close" data-act="open-exit" data-id="{{ p.id }}">Square off…</button>
+          <div id="exit-panel-{{ p.id }}" hidden style="width:100%;margin-top:0.35rem;padding:0.45rem;border:1px solid var(--line);border-radius:6px">
+            <input id="exit-{{ p.id }}" type="number" step="0.05" value="{% if row.ltp %}{{ row.ltp }}{% else %}{{ p.target }}{% endif %}" placeholder="Exit LTP" />
+            <select id="reason-{{ p.id }}">
+              <option value="manual">Exit</option>
+              <option value="target">Target</option>
+              <option value="stop">SL</option>
+            </select>
+            <input id="tags-{{ p.id }}" type="text" placeholder="mistake tags (comma)" />
+            <input id="note-{{ p.id }}" type="text" placeholder="note" />
+            <button type="button" class="btn-close" data-act="close" data-id="{{ p.id }}">Confirm square off</button>
+          </div>
         </div>
         {% endif %}
       </td>
@@ -594,23 +602,19 @@
   });
 
   function closePos(id) {
+    var panel = document.getElementById('exit-panel-' + id);
+    if (panel && panel.hidden) {
+      panel.hidden = false;
+      return;
+    }
     var exitEl = document.getElementById('exit-' + id);
     var reasonEl = document.getElementById('reason-' + id);
     var exit = Number(exitEl && exitEl.value);
     var reason = (reasonEl && reasonEl.value) || 'manual';
-    var exitReason = prompt(
-      'Exit reason: target | sl | manual_early | manual_late | time',
-      reason === 'target' || reason === 'stop' || reason === 'sl' ? (reason === 'stop' ? 'sl' : reason) : 'manual_early'
-    );
-    if (!exitReason) return;
-    var tagsRaw = prompt(
-      'Mistake tags (comma). Include followed_signal_correctly if clean.\n' +
-      'entered_early,entered_late,chased,ignored_sl,moved_sl_wider,exited_early,oversized,ignored_news,revenge_trade,followed_signal_correctly',
-      'followed_signal_correctly'
-    );
-    if (!tagsRaw) return;
-    var tags = tagsRaw.split(',').map(function (t) { return t.trim(); }).filter(Boolean);
-    var note = prompt('Optional note', '') || '';
+    var exitReason = reason === 'stop' ? 'sl' : reason;
+    var tagsRaw = (document.getElementById('tags-' + id) || {}).value || 'followed_signal_correctly';
+    var tags = String(tagsRaw).split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+    var note = (document.getElementById('note-' + id) || {}).value || '';
     outEl().textContent = 'Squaring off…';
     api('/api/positions/' + id + '/close/', {
       method: 'POST',
@@ -956,7 +960,10 @@
     if (!btn) return;
     var act = btn.getAttribute('data-act');
     var id = btn.getAttribute('data-id');
-    if (act === 'close') closePos(id);
+    if (act === 'open-exit') {
+      var panel = document.getElementById('exit-panel-' + id);
+      if (panel) panel.hidden = !panel.hidden;
+    } else if (act === 'close') closePos(id);
     else if (act === 'delete') deletePos(id);
     else if (act === 'edit') editPos(id);
     else if (act === 'reanalyze') reanalyzePos(id);

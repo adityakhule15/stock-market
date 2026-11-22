@@ -22,9 +22,16 @@ python manage.py ta_backtest --tickers RELIANCE.NS,TCS.NS --start YYYY-MM-DD --e
 
 ### (a) Original StockScope signals (LightGBM + risk_gate + charges)
 
+Walk-forward via `backtest.engine.run_backtest` (shared ticket simulator, Groww charges, 1 position at a time). Run after honest train:
+
+```bash
+python manage.py train --mode swing --full --retire-legacy
+python -c "from backtest.engine import run_backtest; from marketdata.service import MarketDataService; b,_=MarketDataService().history('RELIANCE.NS',period='5y'); r=run_backtest('RELIANCE.NS',b); print(r.metrics)"
+```
+
 | Window | N signals | Hit rate | Expectancy (₹ net) | Max DD | Notes |
 |--------|-----------|----------|--------------------|--------|-------|
-| TBD | | | | | |
+| OOS holdout (post-honest train) | _fill_ | _fill_ | _fill_ | _fill_ | Net of Groww CNC charges; compare `nifty_return` in metrics |
 
 ### (b) Agents-only ratings (TradingAgents grid)
 

@@ -1,0 +1,96 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Results — StockScope{% endblock %}
+{% block content %}
+<h1>Results</h1>
+<p class="muted">Practice outcomes, model health, and votes — plain language.</p>
+
+<div class="tabs">
+  <a href="?tab=practice" class="{% if tab == 'practice' %}active{% endif %}">Practice results</a>
+  <a href="?tab=model" class="{% if tab == 'model' %}active{% endif %}">Model health</a>
+  <a href="?tab=backtest" class="{% if tab == 'backtest' %}active{% endif %}">Backtest</a>
+  <a href="?tab=votes" class="{% if tab == 'votes' %}active{% endif %}">Model votes</a>
+  <a href="?tab=blocked" class="{% if tab == 'blocked' %}active{% endif %}">Blocked ideas</a>
+</div>
+
+{% if tab == "practice" %}
+<div class="grid">
+  <div class="card">
+    <h3>Stocks (delivery)</h3>
+    {% if stocks_stats %}
+    <div class="kv">
+      <span>Trades</span><span>{{ stocks_stats.n }}</span>
+      <span>Win rate</span><span>{% if stocks_stats.win_rate != None %}{{ stocks_stats.win_rate }}{% else %}—{% endif %}</span>
+      <span>Avg net</span><span>{% if stocks_stats.avg_net != None %}₹{{ stocks_stats.avg_net }}{% else %}—{% endif %}</span>
+      <span>Total net</span><span>{% if stocks_stats.total_net != None %}₹{{ stocks_stats.total_net }}{% else %}—{% endif %}</span>
+      <span>90% interval</span><span>{% if stocks_stats.ci_lo != None %}₹{{ stocks_stats.ci_lo }} … ₹{{ stocks_stats.ci_hi }}{% else %}need ≥10{% endif %}</span>
+    </div>
+    {% else %}<p class="muted">No practice results yet.</p>{% endif %}
+  </div>
+  <div class="card">
+    <h3>Options (same day)</h3>
+    <p class="muted" style="font-size:0.85rem">{{ fno_unlock.reason }}</p>
+    {% if opts_stats %}
+    <div class="kv">
+      <span>Trades</span><span>{{ opts_stats.n }} / {{ fno_unlock.needed }}</span>
+      <span>Sessions</span><span>{{ opts_stats.sessions }} / {{ fno_unlock.sessions_needed }}</span>
+      <span>Win rate</span><span>{% if opts_stats.win_rate != None %}{{ opts_stats.win_rate }}{% else %}—{% endif %}</span>
+      <span>Avg net</span><span>{% if opts_stats.avg_net != None %}₹{{ opts_stats.avg_net }}{% else %}—{% endif %}</span>
+      <span>90% interval</span><span>{% if opts_stats.ci_lo != None %}₹{{ opts_stats.ci_lo }} … ₹{{ opts_stats.ci_hi }}{% else %}need ≥10{% endif %}</span>
+    </div>
+    {% else %}<p class="muted">No options practice yet.</p>{% endif %}
+  </div>
+</div>
+
+{% elif tab == "model" %}
+<div class="card">
+  <h3>Model health</h3>
+  {% if model_metrics %}
+  <div class="kv">
+    <span>Honest metrics?</span><span>{% if model_metrics.honest %}Yes{% else %}No / legacy{% endif %}</span>
+    <span>Hit rate</span><span>{{ model_metrics.hit_rate|default:"—" }}</span>
+    <span>Expectancy (R)</span><span>{{ model_metrics.expectancy_R|default:"—" }}</span>
+    <span>Log-loss</span><span>{{ model_metrics.log_loss|default:"—" }}</span>
+    <span>Baseline log-loss</span><span>{{ model_metrics.baseline_log_loss|default:"—" }}</span>
+    <span>Threshold</span><span>{{ model_metrics.decision_threshold|default:"—" }}</span>
+  </div>
+  {% if not model_metrics.honest or not model_metrics.expectancy_R %}
+  <p class="muted" style="margin-top:0.75rem">No trustworthy model yet — run <code>python manage.py train --mode swing --full --retire-legacy</code>.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No champion model saved.</p>
+  {% endif %}
+</div>
+
+{% elif tab == "backtest" %}
+<div class="card">
+  <h3>Backtest</h3>
+  <p class="muted">See <code>docs/RESULTS.md</code> table (a) after a walk-forward run.</p>
+  {% if backtest_summary %}
+  <pre style="white-space:pre-wrap;font-size:0.85rem">{{ backtest_summary }}</pre>
+  {% endif %}
+</div>
+
+{% elif tab == "votes" %}
+<div class="card">
+  <h3>Model votes (today)</h3>
+  {% include "dashboard/_calls_table.html" %}
+</div>
+
+{% elif tab == "blocked" %}
+<div class="card">
+  <h3>Blocked ideas today</h3>
+  {% if blocked %}
+  <table>
+    <thead><tr><th>Symbol</th><th>Why</th></tr></thead>
+    <tbody>
+    {% for b in blocked %}
+      <tr><td>{{ b.symbol }}</td><td class="muted">{{ b.reason }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">None recorded.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

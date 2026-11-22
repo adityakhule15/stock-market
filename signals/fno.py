@@ -237,8 +237,9 @@ def build_fno_plan(
         max_premium = 0.0
         max_loss_rupees = 0.0
 
-    sl_pct = 0.35
-    tgt_pct = 0.60
+    # Match live adverse exit so ticket SL = EXIT_NOW premium drop
+    sl_pct = float(getattr(cfg, "FNO_PREMIUM_DROP_EXIT", 0.20))
+    tgt_pct = float(getattr(cfg, "FNO_TARGET_PCT", 0.60))
     expiry_kind = "weekly" if is_index else "monthly"
 
     # Exact ₹ levels from LIVE LTP only — never pad with wallet/lot estimate
@@ -406,9 +407,10 @@ def fno_local_probability(
     plan: dict | None = None,
     regime: dict | None = None,
 ) -> float:
-    """Local F&O edge score (not Gemini) — bias + regime + liquidity + ATM distance.
+    """Local F&O *score* (not a measured probability) — bias + regime + liquidity.
 
-    Returns a calibrated-ish probability in ~[0.35, 0.72] for ranking E-score.
+    Returns ~[0.35, 0.72]. UI must label this as score / unproven until shadow
+    book replaces it with measured win rates.
     """
     opt = (option_type or "CE").upper()
     preferred = (bullish and opt == "CE") or ((not bullish) and opt == "PE")

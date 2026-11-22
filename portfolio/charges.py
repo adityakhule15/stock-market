@@ -98,10 +98,16 @@ def calc_leg_charges(
 
     exchange = exchange_rate * turnover
     sebi = 0.000001 * turnover  # ₹10 / crore
-    # Groww DP on delivery sell (~₹20 + GST); waived-ish under ₹100 sale value
+    # Groww DP on delivery sell (base + GST); waived-ish under ₹100 sale value
     dp = 0.0
     if prod == "CNC" and side == "SELL" and turnover >= 100:
-        dp = round(20.0 * 1.18, 2)
+        try:
+            from config import trading_config as _cfg
+
+            base_dp = float(getattr(_cfg, "GROWW_DP_CHARGE_RS", 20.0))
+        except Exception:  # noqa: BLE001
+            base_dp = 20.0
+        dp = round(base_dp * 1.18, 2)
     gst = 0.18 * (brokerage + exchange + sebi)
     total = round(brokerage + stt + exchange + sebi + stamp + gst + dp, 2)
     return ChargeBreakup(

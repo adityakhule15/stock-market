@@ -220,7 +220,17 @@ def combine_votes(
     weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Weighted consensus score; renormalize over available models."""
-    weights = dict(weights or getattr(cfg, "CONSENSUS_WEIGHTS", {}))
+    if weights is None:
+        weights = dict(getattr(cfg, "CONSENSUS_WEIGHTS", {}))
+        try:
+            from portfolio.models import PortfolioSettings
+
+            mc = (PortfolioSettings.get_solo().models_config or {})
+            if isinstance(mc.get("consensus_weights"), dict):
+                weights = {**weights, **mc["consensus_weights"]}
+        except Exception:  # noqa: BLE001
+            pass
+    weights = dict(weights)
     available = {k: float(v) for k, v in votes.items() if v is not None and k in weights}
     if not available:
         return {
@@ -251,7 +261,10 @@ def apply_consensus_filter(
     gate_reasons: list[str] | None,
     consensus: dict[str, Any],
 ) -> dict[str, Any]:
-    """Filter-mode application. Never unblocks a BLOCK."""
+    """Filter-mode application. Never unblocks a BLOCK.
+
+    Display-only until ≥100 resolved shadow trades; then veto may apply.
+    """
     reasons = list(gate_reasons or [])
     score = consensus.get("score")
     thin = bool(consensus.get("thin"))
@@ -261,15 +274,27 @@ def apply_consensus_filter(
     agree_thr = float(getattr(cfg, "CONSENSUS_AGREE_THRESHOLD", 0.15))
     veto_on = bool(getattr(cfg, "CONSENSUS_VETO_ENABLED", True))
     try:
+        from evidence.models import ShadowTrade
+
+        resolved_n = ShadowTrade.objects.filter(would_recommend=True).exclude(
+            outcome__in=["open", "no_data"]
+        ).count()
+        if resolved_n < 100:
+            veto_on = False  # display-only until evidence
+    except Exception:  # noqa: BLE001
+        veto_on = False
+    try:
         from portfolio.models import PortfolioSettings
 
         stored = (PortfolioSettings.objects.first() or None)
         mc = getattr(stored, "models_config", None) or {} if stored else {}
         if isinstance(mc, dict) and "consensus_veto" in mc:
-            veto_on = bool(mc.get("consensus_veto"))
+            veto_on = bool(mc.get("consensus_veto")) and veto_on
         if isinstance(mc, dict) and mc.get("consensus_enabled") is False:
-            # Show-only: never veto via consensus
             veto_on = False
+        # Prefer learned weights when present
+        if isinstance(mc, dict) and isinstance(mc.get("consensus_weights"), dict):
+            consensus = {**consensus, "weights_override": mc["consensus_weights"]}
     except Exception:  # noqa: BLE001
         pass
 

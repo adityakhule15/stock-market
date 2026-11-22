@@ -14,15 +14,17 @@ Deeper HLD/LLD: [STOCKSCOPE_FULL_ARCHITECTURE.md](STOCKSCOPE_FULL_ARCHITECTURE.m
 
 | Layer | Role |
 |-------|------|
-| **Today (Signals)** | Ranked Normal + F&O ideas that fit the wallet after charges |
-| **Advisor** | Guided NIFTY/BANKNIFTY CALL/PUT coach + free chat |
-| **Positions** | Groww-style book: live LTP, Open/Today P&L, HOLD/SELL advice |
-| **Journal** | Date day-book (gross / charges / net) + weekly review + retrain trigger |
-| **Settings** | F&O watchlist, kill switch, INDstocks token, live refresh seconds |
-| **ML** | Champion LightGBM + meta filter; nightly/weekly retrain with promote guards |
-| **Capital defence** | ALIVE → CAUTION → SURVIVAL → DEAD; lockouts; F&O pause; “sit out” messaging |
+| **Today** | Ranked Stocks (delivery) + Options (same day) with Ready / Practice / Watch / Skip |
+| **Coach** | Guided CALL/PUT coach — SKIP on kill/lockout/DEAD; PRACTICE while options locked |
+| **Positions** | Groww-style book: live LTP, labeled actions, exit window, plain advice |
+| **Results** | Practice unlock stats, model health, backtest, votes, blocked ideas |
+| **Journal** | Date day-book (gross / charges / net) + weekly review |
+| **Settings** | Safety (kill switch + typed reset), options practice, charges, live data, models |
+| **Evidence** | Shadow book tracks every idea; options unlock only after measured net edge |
+| **ML** | Honest OOS LightGBM + EV-after-charges gate; Saturday promote; nightly data-only |
+| **Capital defence** | ALIVE → CAUTION → SURVIVAL → DEAD; lockouts; “sit out” messaging |
 
-**Product goal after drawdown:** stop stacking losses — not magically recover capital. Empty board beats another weak ticket.
+**Product goal after drawdown:** stop stacking losses — not magically recover capital. Empty board beats another weak ticket. Options stay practice-only until the shadow book proves they make money after charges.
 
 ---
 
@@ -61,7 +63,15 @@ Open **http://127.0.0.1:8001**
 powershell -ExecutionPolicy Bypass -File scripts\create_desktop_shortcut.ps1
 ```
 
-Double-click **StockScope India** → server on port **8001** + Chrome.
+Double-click **StockScope India** once. The launcher will:
+
+1. Check / repair the ML packages in `.venv`
+2. Run migrations (including the evidence / shadow book)
+3. Backfill price history only if stale or missing
+4. **Train or update the model** when there is no champion, or the champion is still the old in-sample one
+5. Start the server on port **8001** and open Chrome
+
+First launch after an overhaul can take several minutes while it trains. Later launches skip train if the honest champion is already OK.
 
 ---
 
