@@ -64,9 +64,10 @@ TM_SIMS, TM_SEED, TM_MIN_EDGE_R = 10_000, 19, 0.20  # demand clearer edge
 INTRADAY_ENABLED = True
 ORB_MIN_WIDTH, ORB_MAX_WIDTH, ORB_VOL_MULT = 0.004, 0.02, 1.5
 FORCE_PAPER_UNTIL_GATES = True
-# After capital damage: prefer CNC / skip weak F&O until recovery
+# F&O stays available alongside Normal for recovery; still uses a higher min_prob bar.
+# Set FNO_PAUSE_BELOW_EQUITY > 0 to hard-block new F&O when equity is below that floor.
 FNO_MIN_PROB = 0.58
-FNO_PAUSE_BELOW_EQUITY = 1800  # block new F&O suggestions when equity below this
+FNO_PAUSE_BELOW_EQUITY = 0  # 0 = do not pause F&O on drawdown (Normal + F&O both allowed)
 
 # HARD RULE: StockScope never places broker orders (Groww / INDstocks / any API).
 # Signals + wallet sizing + optional live LTP only. You place orders yourself in the broker app.
