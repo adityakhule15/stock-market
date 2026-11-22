@@ -13,6 +13,8 @@ from research.adapter import (
     agents_enabled,
     build_portfolio_context,
     build_ta_config,
+    disable_agents_for_process,
+    ensure_agents_off_in_settings,
     invoke_runner,
     load_agents_settings,
     provider_keys_present,
@@ -72,6 +74,20 @@ def run_analysis(
 
     portfolio=... → build from wallet; portfolio=None → omit; dict → use as-is.
     """
+    if not agents_enabled():
+        # Do not create/queue runs when agents are off (env / App Control / Settings)
+        as_of_d = today_ist() if as_of is None else (
+            date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
+        )
+        return ResearchRun.objects.create(
+            symbol=symbol,
+            yahoo_ticker=symbol,
+            as_of=as_of_d,
+            status=ResearchRun.Status.ERROR,
+            error="agents disabled",
+            signal=signal,
+        )
+
     if isinstance(as_of, str):
         as_of_d = date.fromisoformat(as_of)
     elif as_of is None:
@@ -187,6 +203,22 @@ def execute_research_run(
             break
         if last.get("timeout"):
             return _finish_error(run, last.get("error") or "timeout", timeout=True)
+        err_txt = str(last.get("error") or "")
+        # Windows Application Control / missing native DLL — retrying never helps
+        if any(
+            x in err_txt
+            for x in (
+                "Application Control policy",
+                "DLL load failed",
+                "_xxhash",
+                "WinError",
+            )
+        ):
+            disable_agents_for_process(err_txt)
+            ensure_agents_off_in_settings(reason=err_txt)
+            # One quiet note only — do not spam the SERVER console
+            logger.debug("Research agents unavailable (%s): %s", run.id, err_txt[:120])
+            return _finish_error(run, err_txt, timeout=False)
         logger.warning(
             "Research run %s attempt %s failed: %s", run.id, attempt + 1, last.get("error")
         )

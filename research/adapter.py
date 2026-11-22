@@ -36,13 +36,35 @@ def project_path(*parts: str) -> Path:
     return Path(settings.BASE_DIR).joinpath(*parts)
 
 
+# Process-local kill after Windows Application Control / DLL failures
+_AGENTS_HARD_DISABLED = False
+_AGENTS_HARD_REASON = ""
+
+
+def disable_agents_for_process(reason: str) -> None:
+    """Stop further TradingAgents attempts this process (DLL / App Control blocks)."""
+    global _AGENTS_HARD_DISABLED, _AGENTS_HARD_REASON
+    if _AGENTS_HARD_DISABLED:
+        return
+    _AGENTS_HARD_DISABLED = True
+    _AGENTS_HARD_REASON = (reason or "agents unavailable")[:240]
+    logger.warning("Research agents disabled for this session: %s", _AGENTS_HARD_REASON)
+
+
+def agents_hard_disabled_reason() -> str:
+    return _AGENTS_HARD_REASON if _AGENTS_HARD_DISABLED else ""
+
+
 def agents_enabled() -> bool:
     """Master switch: env wins if set; else PortfolioSettings.agents_config; else trading_config."""
+    if _AGENTS_HARD_DISABLED:
+        return False
     env = os.getenv("AGENTS_ENABLED", "").strip().lower()
-    if env in {"1", "true", "yes", "on"}:
-        return True
     if env in {"0", "false", "no", "off"}:
         return False
+    if env in {"1", "true", "yes", "on"}:
+        # Still respect process hard-disable after DLL / App Control failure
+        return not _AGENTS_HARD_DISABLED
     try:
         from portfolio.models import PortfolioSettings
 
@@ -50,10 +72,27 @@ def agents_enabled() -> bool:
         if ps is not None:
             stored = getattr(ps, "agents_config", None) or {}
             if isinstance(stored, dict) and "enabled" in stored:
-                return bool(stored.get("enabled"))
+                return bool(stored.get("enabled")) and not _AGENTS_HARD_DISABLED
     except Exception:  # noqa: BLE001
         pass
     return bool(getattr(cfg, "AGENTS_ENABLED", False))
+
+
+def ensure_agents_off_in_settings(*, reason: str = "") -> None:
+    """Persist agents disabled so UI + next boot stay quiet."""
+    try:
+        from portfolio.models import PortfolioSettings
+
+        ps = PortfolioSettings.get_solo()
+        cfg_a = dict(ps.agents_config or {})
+        if cfg_a.get("enabled"):
+            cfg_a["enabled"] = False
+            if reason:
+                cfg_a["auto_disabled_reason"] = reason[:200]
+            ps.agents_config = cfg_a
+            ps.save(update_fields=["agents_config", "updated_at"])
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def resolve_ta_python() -> Path:

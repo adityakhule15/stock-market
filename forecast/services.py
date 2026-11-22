@@ -129,8 +129,14 @@ def forecast_symbol(
             from marketdata.service import MarketDataService
 
             svc = MarketDataService()
-            # Prefer .NS equity symbol for history
-            hist_sym = bare if bare.startswith("^") else f"{bare}.NS"
+            # Indices need Yahoo codes (^NSEI), not NIFTY.NS / BANKNIFTY.NS
+            from signals.tasks import FNO_YF_MAP
+
+            hist_sym = (
+                bare
+                if bare.startswith("^")
+                else (FNO_YF_MAP.get(bare) or f"{bare}.NS")
+            )
             df = svc.bars_df(hist_sym, interval=interval)
             if df is None or df.empty:
                 df = svc.bars_df(bare, interval=interval)

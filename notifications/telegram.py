@@ -12,7 +12,7 @@ def send_message(text: str) -> bool:
     token = settings.TELEGRAM_BOT_TOKEN
     chat_id = settings.TELEGRAM_CHAT_ID
     if not token or not chat_id:
-        logger.info("Telegram not configured; skip: %s", text[:120])
+        # Optional channel — stay quiet when unset (no console spam)
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:

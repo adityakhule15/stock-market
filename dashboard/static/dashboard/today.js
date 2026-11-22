@@ -64,18 +64,37 @@
 
   document.getElementById('btn-tomorrow')?.addEventListener('click', async function () {
     var st = document.getElementById('scan-status');
-    if (st) st.textContent = 'Planning tomorrow…';
+    if (st) st.textContent = 'Planning tomorrow… (scanning wallet-fit ideas)';
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 90000) : null;
     try {
       var resp = await fetch('/api/advisor/tomorrow/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ rescan: true, ai: false }),
+        signal: ctrl ? ctrl.signal : undefined,
       });
       var data = await resp.json();
-      if (st) st.textContent = data.ok ? 'Tomorrow plan ready' : (data.error || 'failed');
-      toast(data.summary || data.bot || st.textContent);
+      if (timer) clearTimeout(timer);
+      if (!resp.ok || data.ok === false) {
+        if (st) st.textContent = data.error || data.summary || ('Failed (' + resp.status + ')');
+        toast(st.textContent);
+        return;
+      }
+      var msg = data.headline || data.summary || (data.verdict + ' · ' + (data.picks || []).length + ' pick(s)');
+      if (data.warnings && data.warnings.length) {
+        msg += ' · ' + data.warnings[0];
+      }
+      if (st) st.textContent = msg;
+      toast(msg);
+      poll();
     } catch (e) {
-      if (st) st.textContent = String(e);
+      if (timer) clearTimeout(timer);
+      var err = (e && e.name === 'AbortError')
+        ? 'Timed out after 90s — check the SERVER window for errors'
+        : String(e);
+      if (st) st.textContent = err;
+      toast(err);
     }
   });
 

@@ -15,6 +15,7 @@ $Py = Join-Path $Root ".venv\Scripts\python.exe"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $env:RUN_EMBEDDED_SCHEDULER = "1"
+$env:PYTHONUNBUFFERED = "1"
 
 function Stamp { (Get-Date).ToString("HH:mm:ss") }
 function Info([string]$msg) { Write-Host ("[{0}] {1}" -f (Stamp), $msg) -ForegroundColor Cyan }
@@ -26,63 +27,29 @@ function Step([string]$msg) {
   Write-Host ("========== {0} ==========" -f $msg) -ForegroundColor White
 }
 
-function Run-Py {
-  param([string[]]$Args, [string]$Label)
+function Invoke-StockScopePy {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$PyArgs,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
   Info "RUNNING: $Label"
-  Info ("Command: {0} {1}" -f $Py, ($Args -join " "))
+  Info ("Command: {0} {1}" -f $Py, ($PyArgs -join " "))
   Info "Status: LOADING (live output below)"
   Add-Content -LiteralPath $BootLog -Value ("`n---- {0} {1} ----" -f (Get-Date), $Label)
 
-  $argLine = ($Args | ForEach-Object {
-    if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
-  }) -join " "
-
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = $Py
-  $psi.Arguments = $argLine
-  $psi.WorkingDirectory = $Root
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
-  $psi.CreateNoWindow = $true
-  $psi.EnvironmentVariables["RUN_EMBEDDED_SCHEDULER"] = "1"
-  $psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1"
-
-  $p = New-Object System.Diagnostics.Process
-  $p.StartInfo = $psi
-  $p.EnableRaisingEvents = $true
-
-  $handlerOut = {
-    if ($EventArgs.Data) {
-      $line = $EventArgs.Data
-      Write-Host ("  | {0}" -f $line)
-      Add-Content -LiteralPath $Event.MessageData -Value $line
-    }
-  }
-  $handlerErr = {
-    if ($EventArgs.Data) {
-      $line = $EventArgs.Data
+  # Call python directly - never use a param named $Args (PowerShell reserved)
+  & $Py -u @PyArgs 2>&1 | ForEach-Object {
+    $line = "$_"
+    if ($line -match '(?i)error|traceback|exception|failed') {
       Write-Host ("  ! {0}" -f $line) -ForegroundColor DarkYellow
-      Add-Content -LiteralPath $Event.MessageData -Value ("ERR: " + $line)
+      Add-Content -LiteralPath $BootLog -Value ("ERR: " + $line)
+    } else {
+      Write-Host ("  | {0}" -f $line)
+      Add-Content -LiteralPath $BootLog -Value $line
     }
   }
-
-  $outSub = Register-ObjectEvent -InputObject $p -EventName OutputDataReceived -Action $handlerOut -MessageData $BootLog
-  $errSub = Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived -Action $handlerErr -MessageData $BootLog
-
-  $null = $p.Start()
-  $p.BeginOutputReadLine()
-  $p.BeginErrorReadLine()
-  while (-not $p.HasExited) {
-    Start-Sleep -Milliseconds 200
-  }
-  Start-Sleep -Milliseconds 300
-  Unregister-Event -SourceIdentifier $outSub.Name -ErrorAction SilentlyContinue
-  Unregister-Event -SourceIdentifier $errSub.Name -ErrorAction SilentlyContinue
-  Remove-Job $outSub -Force -ErrorAction SilentlyContinue
-  Remove-Job $errSub -Force -ErrorAction SilentlyContinue
-
-  $code = $p.ExitCode
+  $code = $LASTEXITCODE
+  if ($null -eq $code) { $code = 0 }
   if ($code -eq 0) { Ok "$Label finished (exit 0)" }
   else {
     Warn "$Label finished with exit code $code"
@@ -110,14 +77,18 @@ if (-not (Test-Path $Py)) {
 
 # --- 1 ML check ---
 Step "1/5  ML stack check (LOADING)"
-$code = Run-Py @("-c", "import pandas, lightgbm, numpy; print('pandas', pandas.__version__); print('lightgbm', lightgbm.__version__); print('numpy', numpy.__version__)") "import pandas/lightgbm/numpy"
+$code = Invoke-StockScopePy -Label "import pandas/lightgbm/numpy" -PyArgs @(
+  "-c", "import pandas, lightgbm, numpy; print('pandas', pandas.__version__); print('lightgbm', lightgbm.__version__); print('numpy', numpy.__version__)"
+)
 if ($code -ne 0) {
   Warn "ML import failed - repairing packages (this can take a few minutes)..."
-  $null = Run-Py @(
+  $null = Invoke-StockScopePy -Label "pip repair ML stack" -PyArgs @(
     "-m", "pip", "install", "--force-reinstall", "--no-cache-dir",
     "pandas==2.2.3", "pyarrow==17.0.0", "numpy==2.1.3", "lightgbm==4.5.0", "scikit-learn==1.5.2"
-  ) "pip repair ML stack"
-  $code = Run-Py @("-c", "import pandas, lightgbm, numpy; print('ok')") "re-check ML imports"
+  )
+  $code = Invoke-StockScopePy -Label "re-check ML imports" -PyArgs @(
+    "-c", "import pandas, lightgbm, numpy; print('ok')"
+  )
   if ($code -ne 0) {
     Err "ML stack still broken. Fix .venv then retry."
     Read-Host "Press Enter to close"
@@ -128,10 +99,10 @@ if ($code -ne 0) {
 # --- 2 bootstrap ---
 Step "2/5  Database migrate + data + model (LOADING)"
 Info "This may take seconds, or minutes if it needs to train."
-$code = Run-Py @("manage.py", "bootstrap") "manage.py bootstrap"
+$code = Invoke-StockScopePy -Label "manage.py bootstrap" -PyArgs @("manage.py", "bootstrap")
 if ($code -ne 0) {
   Warn "Bootstrap reported an error - trying migrate only..."
-  $null = Run-Py @("manage.py", "migrate", "--noinput") "manage.py migrate"
+  $null = Invoke-StockScopePy -Label "manage.py migrate" -PyArgs @("manage.py", "migrate", "--noinput")
 }
 
 # --- 3 free port ---

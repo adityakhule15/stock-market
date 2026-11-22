@@ -32,27 +32,35 @@ def _next_session_label() -> str:
     return d.strftime("%a %d-%b-%Y") + " · enter after 09:46 IST"
 
 
-def _scan_fresh(*, include_fno: bool = True) -> list:
-    """Run a light scan so tomorrow plan isn't stale empty."""
+def _scan_fresh(*, include_fno: bool = True, max_symbols: int = 12) -> list:
+    """Run a light scan so tomorrow plan isn't stale empty.
+
+    Keep this small/fast — Buy for tomorrow must return in the UI quickly.
+    """
     from signals.tasks import generate_fno_for_underlyings, generate_signals_for_universe
     from marketdata.management.commands.bootstrap import BOOTSTRAP_SYMBOLS
     from marketdata.universe import shortlist_symbols
 
     created = []
+    warnings: list[str] = []
     try:
-        symbols = shortlist_symbols(40) or BOOTSTRAP_SYMBOLS
+        symbols = shortlist_symbols(max_symbols) or BOOTSTRAP_SYMBOLS
         merged = list(dict.fromkeys(list(symbols) + list(BOOTSTRAP_SYMBOLS)))
-        created.extend(generate_signals_for_universe(merged[:20]))
+        created.extend(generate_signals_for_universe(merged[:max_symbols]))
     except Exception as exc:  # noqa: BLE001
         logger.warning("tomorrow normal scan: %s", exc)
+        warnings.append(f"stock scan: {exc}")
     if include_fno:
         try:
             ps = PortfolioSettings.get_solo()
             names = [str(x).upper().replace(".NS", "") for x in (ps.fno_watchlist or []) if x]
+            # Prefer NIFTY only for speed; BANKNIFTY Yahoo index often fails offline
+            names = [n for n in names if n][:2]
             if names:
                 created.extend(generate_fno_for_underlyings(names))
         except Exception as exc:  # noqa: BLE001
             logger.warning("tomorrow fno scan: %s", exc)
+            warnings.append(f"options scan: {exc}")
     return created
 
 
@@ -60,7 +68,7 @@ def _candidate_signals(*, rescan: bool = True) -> list:
     from signals.models import Signal
 
     if rescan:
-        _scan_fresh(include_fno=True)
+        _scan_fresh(include_fno=True, max_symbols=12)
 
     today = timezone.localdate()
     qs = list(
@@ -169,10 +177,11 @@ def _ai_coach(plan: dict[str, Any]) -> dict[str, Any]:
         return {"provider": "local", "text": f"AI unavailable: {exc}", "error": str(exc)[:160]}
 
 
-def build_tomorrow_plan(*, rescan: bool = True) -> dict[str, Any]:
+def build_tomorrow_plan(*, rescan: bool = True, use_ai: bool = False) -> dict[str, Any]:
     ps = PortfolioSettings.get_solo()
     w = wallet_now()
     session = _next_session_label()
+    warnings: list[str] = []
 
     open_pos = list(
         Position.objects.filter(status=Position.Status.OPEN)
@@ -244,6 +253,11 @@ def build_tomorrow_plan(*, rescan: bool = True) -> dict[str, Any]:
         else f"No wallet-fit net-profit idea for {session}"
     )
 
+    if not picks:
+        warnings.append(
+            "No wallet-fit idea after charges — at ~₹1720 CNC targets often lose to DP fees; "
+            "options stay practice-only until unlock."
+        )
     plan = {
         "ok": True,
         "session": session,
@@ -252,6 +266,8 @@ def build_tomorrow_plan(*, rescan: bool = True) -> dict[str, Any]:
         "open_positions": open_labels,
         "verdict": verdict,
         "headline": headline,
+        "summary": headline,
+        "warnings": warnings,
         "notes": [
             "Prepare levels tonight; place on Groww only after 09:46 IST tomorrow.",
             "F&O ideas are same-day only — square off by 15:10 IST.",
@@ -259,5 +275,12 @@ def build_tomorrow_plan(*, rescan: bool = True) -> dict[str, Any]:
             f"Hard wallet cap ₹{cfg.CAPITAL:.0f}.",
         ],
     }
-    plan["ai"] = _ai_coach(plan)
+    # AI coach is optional — default off so the UI does not hang on Gemini/network
+    if use_ai:
+        plan["ai"] = _ai_coach(plan)
+    else:
+        plan["ai"] = {
+            "provider": "skipped",
+            "text": "Local plan only (AI coach skipped for speed). Picks above are from your model + wallet rules.",
+        }
     return plan

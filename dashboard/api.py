@@ -534,19 +534,25 @@ def advisor_ai_status(request):
 @api_view(["GET", "POST"])
 @permission_classes([AllowAny])
 def advisor_tomorrow(request):
-    """What to purchase for tomorrow — local ranked tickets; Gemini narrative coach only."""
+    """What to purchase for tomorrow — local ranked tickets; AI coach optional."""
     from dashboard.tomorrow_plan import build_tomorrow_plan
 
     rescan = True
+    use_ai = False
     if request.method == "GET":
         rescan = str(request.query_params.get("rescan") or "1") not in {"0", "false", "no"}
+        use_ai = str(request.query_params.get("ai") or "0") in {"1", "true", "yes"}
     else:
         data = request.data or {}
         rescan = data.get("rescan", True) not in (False, "false", "0", 0, "no")
+        use_ai = data.get("ai", False) in (True, "true", "1", 1, "yes")
     try:
-        out = build_tomorrow_plan(rescan=bool(rescan))
+        out = build_tomorrow_plan(rescan=bool(rescan), use_ai=bool(use_ai))
     except Exception as exc:  # noqa: BLE001
-        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {"ok": False, "error": str(exc), "summary": f"Tomorrow plan failed: {exc}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     return Response(out)
 
 
