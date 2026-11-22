@@ -1,0 +1,18 @@
+# Isolated Kronos sidecar (CPU torch). Install into .venv-kronos ONLY.
+# Do NOT install into the Django .venv (torch + WDAC risk) or .venv-ta (pandas 3).
+#
+#   python -m venv .venv-kronos
+#   .venv-kronos\Scripts\python -m pip install -U pip
+#   .venv-kronos\Scripts\python -m pip install -r requirements-kronos.txt
+#
+# First predict downloads NeoQuasar/Kronos-small + Tokenizer-base (~115 MB)
+# into data/kronos/hf_cache (gitignored). HF telemetry is disabled by the runner.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+einops==0.8.1
+huggingface_hub==0.33.1
+safetensors==0.6.2
+pandas>=2.2,<3
+numpy>=1.26,<2.3
+tqdm==4.67.1

@@ -15,12 +15,14 @@ services:
       - TRADINGAGENTS_MEMORY_LOG_PATH=/app/data/tradingagents/memory/trading_memory.md
       - TA_PYTHON=/usr/local/bin/python
       - TA_RUNNER=/app/scripts/ta_runner.py
+      - KRONOS_PYTHON=/usr/local/bin/python
+      - KRONOS_RUNNER=/app/scripts/kronos_runner.py
+      - HF_HUB_DISABLE_TELEMETRY=1
     volumes:
       - ./data:/app/data
       - ./artifacts:/app/artifacts
       - ./scripts:/app/scripts:ro
-    depends_on:
-      - research-agents
+      - ./third_party:/app/third_party:ro
 
   research-agents:
     build:
@@ -41,3 +43,22 @@ services:
     entrypoint: ["sleep", "infinity"]
     profiles:
       - agents
+
+  kronos:
+    build:
+      context: .
+      dockerfile: Dockerfile.kronos
+    env_file:
+      - .env
+    environment:
+      - HF_HUB_DISABLE_TELEMETRY=1
+      - HF_HOME=/app/data/kronos/hf_cache
+      - HUGGINGFACE_HUB_CACHE=/app/data/kronos/hf_cache
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+      - ./third_party/kronos:/app/third_party/kronos:ro
+      - ./scripts/kronos_runner.py:/app/scripts/kronos_runner.py:ro
+    entrypoint: ["sleep", "infinity"]
+    profiles:
+      - kronos

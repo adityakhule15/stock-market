@@ -15,3 +15,13 @@ TradingAgents (or any other library) to place broker orders.
 
 If a future vendored copy under third_party/tradingagents/ is required due to
 install conflicts, any local patches will be listed in this NOTICE.
+
+This product also includes software from:
+
+  Kronos
+  Copyright (c) shiyu-coder / NeoQuasar contributors
+  https://github.com/shiyu-coder/Kronos
+  Licensed under the MIT License
+  Vendored unmodified at commit 67b630e67f6a18c9e9be918d9b4337c960db1e9a
+  under third_party/kronos/ (model/ only). Inference runs in an isolated
+  .venv-kronos CPU sidecar; StockScope never places broker orders via Kronos.

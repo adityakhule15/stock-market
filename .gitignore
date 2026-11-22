@@ -1,5 +1,6 @@
 .venv/
 .venv-ta/
+.venv-kronos/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -21,3 +22,6 @@ build/
 # TradingAgents sidecar caches / memory (also under data/)
 data/tradingagents/
 artifacts/research/
+# Kronos HF weights / forecast artifacts
+data/kronos/
+artifacts/kronos/

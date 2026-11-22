@@ -1,0 +1,6 @@
+Upstream: https://github.com/shiyu-coder/Kronos
+Pinned commit: 67b630e67f6a18c9e9be918d9b4337c960db1e9a
+License: MIT (see LICENSE)
+Vendored files: model/__init__.py, model/kronos.py, model/module.py
+Modifications: none — used as-is via scripts/kronos_runner.py with
+third_party/kronos on PYTHONPATH.
