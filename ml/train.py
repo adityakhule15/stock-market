@@ -129,20 +129,21 @@ def walk_forward_train(dataset: pd.DataFrame, params: dict | None = None) -> tup
     decision_threshold = 0.60
     metrics: dict = {}
     calibrator = None
-    if mask.sum() >= 30 and y.values[mask].nunique() > 1:
+    y_oof = np.asarray(y.values)[mask]
+    if mask.sum() >= 30 and len(np.unique(y_oof)) > 1:
         # Fit isotonic on OOF only
         trial = IsotonicRegression(out_of_bounds="clip")
-        trial.fit(oof[mask], y.values[mask])
+        trial.fit(oof[mask], y_oof)
         oof_cal = trial.transform(oof[mask])
         if float(np.ptp(oof_cal)) >= 0.10:
             calibrator = trial
             scored = oof_cal
         else:
             scored = oof[mask]
-        decision_threshold, thr_m = best_threshold(y.values[mask], scored, min_signals=20, win_R=2.0)
+        decision_threshold, thr_m = best_threshold(y_oof, scored, min_signals=20, win_R=2.0)
         metrics = dict(thr_m)
         metrics["decision_threshold"] = decision_threshold
-        metrics["reliability_oof"] = reliability_table(y.values[mask], scored)
+        metrics["reliability_oof"] = reliability_table(y_oof, scored)
         metrics["oof_n"] = int(mask.sum())
     else:
         metrics = {"expectancy_R": 0.0, "oof_n": int(mask.sum())}

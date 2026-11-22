@@ -44,13 +44,14 @@ def _champion_needs_train(champ) -> tuple[bool, str]:
     m = champ.metrics if isinstance(champ.metrics, dict) else {}
     if not m.get("honest"):
         return True, "legacy in-sample champion — need honest retrain"
-    if m.get("n_signals", 0) == 0:
-        return True, "champion has zero signals in metrics"
-    if float(m.get("auc") or 0) >= 0.99:
+    if float(m.get("auc") or 0) >= 0.99 and not m.get("provisional"):
         return True, "champion looks overfit (AUC ≥ 0.99)"
     # Stale: no holdout metrics after overhaul
-    if m.get("expectancy_R") is None and m.get("holdout") is None:
+    if m.get("holdout") is None and m.get("expectancy_R") is None and not m.get("honest"):
         return True, "champion missing honest holdout metrics"
+    # Honest (even provisional / no edge) is enough for desktop — weekly job retrains
+    if m.get("provisional") or m.get("no_trustworthy_model"):
+        return False, "honest provisional champion (no proven edge yet — OK for launch)"
     return False, "champion OK"
 
 

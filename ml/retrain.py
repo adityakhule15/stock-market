@@ -102,11 +102,25 @@ def retrain_and_maybe_promote(
     positive_edge = cand_exp > 0 and cand_n >= 10
     honest = bool(cand_m.get("honest"))
 
+    trustworthy = honest and beats_baseline and positive_edge
+    cand_m["trustworthy"] = trustworthy
     promote = False
+    provisional = False
     if champ is None:
-        # First honest model: only promote if it clears the bar
-        promote = honest and beats_baseline and positive_edge
-        if not promote:
+        # Absolute bar for a *trusted* champion
+        promote = trustworthy
+        if not promote and honest:
+            # Desktop / offline: still install as provisional champion so scans
+            # can run, while UI shows "no trustworthy model".
+            provisional = True
+            cand_m["provisional"] = True
+            cand_m["no_trustworthy_model"] = True
+            logger.info(
+                "No trusted edge (exp=%.3f n=%s) — installing provisional honest champion",
+                cand_exp,
+                cand_n,
+            )
+        elif not promote:
             logger.info(
                 "No champion; candidate not promoted (honest=%s beats_base=%s exp=%.3f n=%s)",
                 honest,
@@ -123,20 +137,36 @@ def retrain_and_maybe_promote(
         champ_exp = float(champ_m.get("expectancy_R") or 0)
         # Candidate must clear absolute bar AND beat champion on holdout expectancy
         promote = (
-            honest
-            and beats_baseline
-            and positive_edge
+            trustworthy
             and cand_exp >= champ_exp + 0.02
             and cand_m.get("brier", 1) <= champ_m.get("brier", 1) + 0.02
         )
+        # Replace a provisional/untrusted champion with a newer honest candidate
+        # even without edge, so metrics stay current (still marked untrusted).
+        if (
+            not promote
+            and honest
+            and not (champ.metrics or {}).get("trustworthy", True)
+            and float(cand_m.get("log_loss") or 9) <= float((champ.metrics or {}).get("log_loss") or 9) + 1e-6
+        ):
+            provisional = True
+            cand_m["provisional"] = True
+            cand_m["no_trustworthy_model"] = True
 
     mv = registry.save(candidate_bundle, metrics=cand_m, name=name, status="candidate")
-    if promote:
+    if promote or provisional:
         registry.promote(mv)
-        logger.info("Promoted %s_v%s metrics=%s", name, mv.version, {k: cand_m.get(k) for k in ("expectancy_R", "hit_rate", "log_loss")})
+        logger.info(
+            "Promoted %s_v%s trustworthy=%s provisional=%s metrics=%s",
+            name,
+            mv.version,
+            trustworthy,
+            provisional,
+            {k: cand_m.get(k) for k in ("expectancy_R", "hit_rate", "log_loss")},
+        )
     else:
         logger.info("Kept champion; candidate %s_v%s not better / failed bar", name, mv.version)
-    return mv, promote
+    return mv, promote or provisional
 
 
 def maybe_auto_rollback(name: str = "swing_lgbm") -> bool:

@@ -46,6 +46,7 @@
   <h3>Model health</h3>
   {% if model_metrics %}
   <div class="kv">
+    <span>Status</span><span>{{ model_metrics.trust_label|default:"Installed" }}</span>
     <span>Honest metrics?</span><span>{% if model_metrics.honest %}Yes{% else %}No / legacy{% endif %}</span>
     <span>Hit rate</span><span>{{ model_metrics.hit_rate|default:"—" }}</span>
     <span>Expectancy (R)</span><span>{{ model_metrics.expectancy_R|default:"—" }}</span>
@@ -53,11 +54,13 @@
     <span>Baseline log-loss</span><span>{{ model_metrics.baseline_log_loss|default:"—" }}</span>
     <span>Threshold</span><span>{{ model_metrics.decision_threshold|default:"—" }}</span>
   </div>
-  {% if not model_metrics.honest or not model_metrics.expectancy_R %}
-  <p class="muted" style="margin-top:0.75rem">No trustworthy model yet — run <code>python manage.py train --mode swing --full --retire-legacy</code>.</p>
+  {% if model_metrics.no_trustworthy_model or model_metrics.provisional %}
+  <p class="muted" style="margin-top:0.75rem">
+    No trustworthy edge on unseen data yet. Stock Ready cards may stay empty until charges fit or the model shows positive expectancy. Options stay practice-only.
+  </p>
   {% endif %}
   {% else %}
-  <p class="muted">No champion model saved.</p>
+  <p class="muted">No champion model saved — use the desktop icon to train, or run <code>python manage.py train --mode swing --retire-legacy</code>.</p>
   {% endif %}
 </div>
 

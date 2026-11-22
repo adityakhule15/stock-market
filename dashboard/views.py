@@ -670,6 +670,14 @@ def results_page(request):
         )
     champ = registry.champion("swing_lgbm")
     model_metrics = champ.metrics if champ and isinstance(champ.metrics, dict) else None
+    if model_metrics is not None:
+        model_metrics = dict(model_metrics)
+        if model_metrics.get("no_trustworthy_model") or model_metrics.get("provisional"):
+            model_metrics["trust_label"] = "No trustworthy model yet — honest metrics, no proven edge"
+        elif model_metrics.get("trustworthy"):
+            model_metrics["trust_label"] = "Trusted (passed holdout bar)"
+        else:
+            model_metrics["trust_label"] = "Installed"
     return render(
         request,
         "dashboard/results.html",
