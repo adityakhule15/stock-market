@@ -170,7 +170,27 @@ def review_signals(
             out.append(review_signal(s, run_agents=s.id in agents_ids))
         except Exception:  # noqa: BLE001
             logger.exception("model review failed for signal %s", getattr(s, "id", None))
+    try:
+        _telegram_summary(sigs, out)
+    except Exception:  # noqa: BLE001
+        logger.debug("telegram consensus summary skipped", exc_info=True)
     return out
+
+
+def _telegram_summary(sigs: list[Signal], consensuses: list[dict[str, Any]]) -> None:
+    from notifications.telegram import send_message
+
+    lines = ["StockScope combined calls"]
+    for s, cs in zip(sigs, consensuses):
+        if not isinstance(cs, dict):
+            continue
+        call = cs.get("final_call") or cs.get("badge") or "—"
+        lines.append(
+            f"{s.instrument.symbol} {s.side} gate={(s.gate or {}).get('result')} "
+            f"→ {call} score={cs.get('score')}"
+        )
+    if len(lines) > 1:
+        send_message("\n".join(lines[:20]))
 
 
 def enqueue_model_review(signal_ids: list[int]) -> None:

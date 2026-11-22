@@ -103,6 +103,41 @@
   </p>
 </div>
 
+<div class="card" style="margin-top:1rem">
+  <h3 style="margin:0 0 0.5rem">Models &amp; consensus</h3>
+  <p class="muted" style="font-size:0.88rem;margin:0 0 0.75rem">
+    Kronos runs locally on CPU (no paid API). Consensus is <strong>filter mode</strong>:
+    it can veto or re-rank PASS tickets only — never unblock a BLOCK, never place orders.
+  </p>
+  <div class="kv" style="margin-bottom:0.75rem">
+    <span>Kronos</span><span id="kr-enabled-label">{% if kronos.enabled %}ON{% else %}OFF{% endif %}</span>
+    <span>Model</span><span>{{ kronos.model_id }}</span>
+    <span>Paths / lookback</span><span>{{ kronos.paths }} / {{ kronos.lookback }}</span>
+    <span>Weights</span><span class="muted" style="font-size:0.8rem">LGBM 0.30 · TM 0.20 · Kronos 0.20 · Agents 0.15 · Meta 0.10 · Insider 0.05</span>
+  </div>
+  <div class="row" style="gap:0.5rem;flex-wrap:wrap;align-items:flex-end">
+    <label class="muted">Kronos size
+      <select id="kr-size">
+        <option value="mini" {% if kronos.model_size == "mini" %}selected{% endif %}>mini</option>
+        <option value="small" {% if kronos.model_size == "small" %}selected{% endif %}>small</option>
+        <option value="base" {% if kronos.model_size == "base" %}selected{% endif %}>base</option>
+      </select>
+    </label>
+    <label class="muted">Paths <input id="kr-paths" type="number" min="4" max="64" value="{{ kronos.paths }}" style="width:4rem" /></label>
+  </div>
+  <div class="row" style="margin-top:0.75rem;gap:0.5rem;align-items:center">
+    <label class="row" style="gap:0.35rem"><input type="checkbox" id="kr-enable" {% if kronos.enabled %}checked{% endif %} /> Enable Kronos</label>
+    <label class="row" style="gap:0.35rem"><input type="checkbox" id="cs-veto" {% if models_config.consensus_veto != False %}checked{% endif %} /> Consensus veto</label>
+    <button type="button" id="btn-save-models">Save models</button>
+    <span id="kr-status" class="muted"></span>
+  </div>
+  <p class="muted" style="margin:0.6rem 0 0;font-size:0.8rem">
+    Install sidecar: <code>python -m venv .venv-kronos</code> then
+    <code>.venv-kronos\Scripts\pip install -r requirements-kronos.txt</code>.
+    First run downloads ~115 MB weights into <code>data/kronos/hf_cache</code>.
+  </p>
+</div>
+
 {% if request.user.is_staff %}
 <div class="card" style="margin-top:1rem">
   <h3 style="margin-top:0">Staff: reset life after DEAD</h3>
@@ -229,6 +264,30 @@ document.getElementById('btn-save-agents').addEventListener('click', async funct
   if (data.ok) {
     st.textContent = 'Saved';
     document.getElementById('ag-enabled-label').textContent = data.settings.enabled ? 'ON' : 'OFF';
+  } else {
+    st.textContent = data.error || 'Save failed';
+  }
+});
+
+document.getElementById('btn-save-models').addEventListener('click', async function () {
+  const st = document.getElementById('kr-status');
+  st.textContent = 'Saving…';
+  const body = {
+    kronos_enabled: document.getElementById('kr-enable').checked,
+    kronos_model_size: document.getElementById('kr-size').value,
+    kronos_paths: Number(document.getElementById('kr-paths').value || 32),
+    consensus_veto: document.getElementById('cs-veto').checked,
+    consensus_enabled: true,
+  };
+  const resp = await fetch('/api/settings/models/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    st.textContent = 'Saved';
+    document.getElementById('kr-enabled-label').textContent = data.kronos.enabled ? 'ON' : 'OFF';
   } else {
     st.textContent = data.error || 'Save failed';
   }

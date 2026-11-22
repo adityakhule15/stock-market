@@ -902,6 +902,136 @@ def agents_settings(request):
     return Response({"ok": True, "settings": load_agents_settings(), "stored": stored})
 
 
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+def models_settings(request):
+    """GET/POST Kronos + consensus settings (PortfolioSettings.models_config)."""
+    from forecast.adapter import load_kronos_settings
+
+    ps = PortfolioSettings.get_solo()
+    if request.method == "GET":
+        return Response(
+            {
+                "ok": True,
+                "kronos": load_kronos_settings(),
+                "stored": ps.models_config or {},
+                "weights": getattr(cfg, "CONSENSUS_WEIGHTS", {}),
+            }
+        )
+
+    data = request.data or {}
+    allowed = {
+        "kronos_enabled",
+        "kronos_model_size",
+        "kronos_paths",
+        "consensus_veto",
+        "consensus_enabled",
+    }
+    stored = dict(ps.models_config or {})
+    for k in allowed:
+        if k in data:
+            stored[k] = data[k]
+    if "kronos_enabled" in stored:
+        stored["kronos_enabled"] = stored["kronos_enabled"] in (
+            True,
+            "true",
+            "1",
+            1,
+            "yes",
+            "on",
+        )
+    if "consensus_veto" in stored:
+        stored["consensus_veto"] = stored["consensus_veto"] in (
+            True,
+            "true",
+            "1",
+            1,
+            "yes",
+            "on",
+        )
+    ps.models_config = stored
+    ps.save(update_fields=["models_config", "updated_at"])
+    return Response(
+        {
+            "ok": True,
+            "kronos": load_kronos_settings(),
+            "stored": stored,
+            "weights": getattr(cfg, "CONSENSUS_WEIGHTS", {}),
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def calls_today(request):
+    """JSON board of today's model calls + consensus."""
+    from django.utils import timezone
+
+    from signals.consensus import consensus_from_signal
+
+    today = timezone.localdate()
+    qs = (
+        Signal.objects.filter(created_at__date=today)
+        .select_related("instrument")
+        .order_by("-probability")[:50]
+    )
+    rows = []
+    for s in qs:
+        pipe = s.pipeline or {}
+        bundle = pipe.get("consensus") and pipe.get("model_calls")
+        if not bundle:
+            try:
+                fresh = consensus_from_signal(s)
+                models = fresh["models"]
+                consensus = fresh["consensus"]
+            except Exception:  # noqa: BLE001
+                models, consensus = {}, {}
+        else:
+            models = pipe.get("model_calls") or {}
+            consensus = pipe.get("consensus") or {}
+        rows.append(
+            {
+                "id": s.id,
+                "symbol": s.instrument.symbol,
+                "side": s.side,
+                "status": s.status,
+                "gate": (s.gate or {}).get("result"),
+                "probability": s.probability,
+                "models": {
+                    k: {
+                        "call": v.get("call"),
+                        "vote": v.get("vote"),
+                        "parameters": v.get("parameters"),
+                        "unavailable": v.get("unavailable"),
+                    }
+                    for k, v in models.items()
+                    if isinstance(v, dict) and k != "skill_checklist"
+                },
+                "skill_checklist": models.get("skill_checklist")
+                or pipe.get("skill_checklist")
+                or [],
+                "consensus": consensus,
+            }
+        )
+    return Response({"ok": True, "as_of": today.isoformat(), "count": len(rows), "calls": rows})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def calls_refresh(request):
+    """Enqueue background model review for today's signals."""
+    from django.utils import timezone
+
+    from signals.model_review import enqueue_model_review
+
+    today = timezone.localdate()
+    ids = list(
+        Signal.objects.filter(created_at__date=today).values_list("id", flat=True)[:80]
+    )
+    enqueue_model_review(ids)
+    return Response({"ok": True, "count": len(ids)})
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def research_run(request):

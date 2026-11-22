@@ -148,6 +148,16 @@
         {% endif %}
       {% endif %}
       {% endwith %}
+      {% with cs=s.pipeline.consensus %}
+      {% if cs.badge %}
+        {% if cs.vetoed %}<span class="badge block">{{ cs.badge }}</span>
+        {% elif "agree" in cs.badge %}<span class="badge pass">{{ cs.badge }}</span>
+        {% else %}<span class="badge warn">{{ cs.badge }}</span>{% endif %}
+      {% endif %}
+      {% endwith %}
+      {% with kr=s.pipeline.kronos %}
+      {% if kr.call %}<span class="badge age">Kronos {{ kr.call }}</span>{% endif %}
+      {% endwith %}
     </div>
     {% with ag=s.pipeline.agents %}
     {% if ag.final_rating or ag.summary or ag.bull_case or ag.rating or ag.badge %}
@@ -162,6 +172,57 @@
         {% if ag.limitation %}<li class="warn">{{ ag.limitation }}</li>{% endif %}
         {% if ag.indian_data_note %}<li>{{ ag.indian_data_note }}</li>{% endif %}
       </ul>
+    </details>
+    {% endif %}
+    {% endwith %}
+
+    {% with cs=s.pipeline.consensus mc=s.pipeline.model_calls %}
+    {% if cs or mc %}
+    <details class="why" style="margin-bottom:0.45rem" open>
+      <summary>Model calls{% if cs.final_call %} → {{ cs.final_call }}{% endif %}{% if cs.score != None %} (score {{ cs.score }}){% endif %}</summary>
+      <table style="width:100%;font-size:0.82rem;border-collapse:collapse;margin-top:0.4rem">
+        <thead>
+          <tr style="text-align:left;color:var(--muted)">
+            <th style="padding:0.2rem 0.35rem">Model</th>
+            <th style="padding:0.2rem 0.35rem">Call</th>
+            <th style="padding:0.2rem 0.35rem">Parameters</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if mc.lightgbm %}
+          <tr><td style="padding:0.2rem 0.35rem">LightGBM</td><td>{{ mc.lightgbm.call }} p={{ mc.lightgbm.probability }}</td><td class="muted">RR {{ mc.lightgbm.rr_net }} · {{ mc.lightgbm.product }}</td></tr>
+          {% endif %}
+          {% if mc.meta %}
+          <tr><td style="padding:0.2rem 0.35rem">Meta</td><td>{% if mc.meta.unavailable %}n/a{% else %}{{ mc.meta.call }} P(win)={{ mc.meta.p_win }}{% endif %}</td><td class="muted">champion filter</td></tr>
+          {% endif %}
+          {% if mc.time_machine %}
+          <tr><td style="padding:0.2rem 0.35rem">Time Machine</td><td>{{ mc.time_machine.call|default:"—" }}</td><td class="muted">P(t)={{ mc.time_machine.p_target }} P(s)={{ mc.time_machine.p_stop }} · seed {{ mc.time_machine.seed }}</td></tr>
+          {% endif %}
+          {% if mc.kronos %}
+          <tr><td style="padding:0.2rem 0.35rem">Kronos</td><td>{% if mc.kronos.unavailable %}unavailable{% else %}{{ mc.kronos.call }}{% endif %}</td><td class="muted">{% if mc.kronos.stats.p_up %}P(up)={{ mc.kronos.stats.p_up }}{% endif %} {% if mc.kronos.parameters.model_id %}{{ mc.kronos.parameters.model_id }}{% endif %}</td></tr>
+          {% endif %}
+          {% if mc.tradingagents %}
+          <tr><td style="padding:0.2rem 0.35rem">TradingAgents</td><td>{% if mc.tradingagents.unavailable %}unavailable{% else %}{{ mc.tradingagents.call|default:"—" }}{% endif %}</td><td class="muted">{{ mc.tradingagents.badge|default:"" }}</td></tr>
+          {% endif %}
+          {% if mc.insider %}
+          <tr><td style="padding:0.2rem 0.35rem">India insider</td><td>{% if mc.insider.unavailable %}pending/n/a{% else %}{{ mc.insider.call|default:"none" }}{% endif %}</td><td class="muted">net ₹{{ mc.insider.net_value_inr|default:"0" }}</td></tr>
+          {% endif %}
+          {% if mc.analyst %}
+          <tr><td style="padding:0.2rem 0.35rem">Analyst</td><td>facts only</td><td class="muted">{{ mc.analyst.summary|default:"pending"|truncatechars:80 }}</td></tr>
+          {% endif %}
+          {% if cs %}
+          <tr style="border-top:1px solid var(--line)"><td style="padding:0.35rem"><strong>Combined</strong></td><td><strong>{{ cs.final_call|default:cs.badge|default:"—" }}</strong></td><td class="muted">{{ cs.reason|default:"" }} · {{ cs.agree_k|default:0 }}/{{ cs.n_models|default:0 }} models</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+      {% if cs.skill_checklist or s.pipeline.skill_checklist %}
+      <p class="muted" style="margin:0.5rem 0 0.2rem;font-size:0.78rem">Day-trader checklist</p>
+      <ul style="margin:0;padding-left:1.1rem;color:var(--muted);font-size:0.78rem;columns:2">
+        {% for row in s.pipeline.skill_checklist %}
+        <li>{{ row.skill }}: {{ row.status }}{% if row.detail %} — {{ row.detail|truncatechars:40 }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
     </details>
     {% endif %}
     {% endwith %}

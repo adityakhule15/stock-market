@@ -4,6 +4,7 @@ from dashboard import views
 
 urlpatterns = [
     path("", views.signals_page, name="signals"),
+    path("calls/", views.calls_page, name="calls"),
     path("advisor/", views.advisor_page, name="advisor"),
     path("partials/signals/", views.signals_partial, name="signals_partial"),
     path("blocked/", views.blocked_page, name="blocked"),

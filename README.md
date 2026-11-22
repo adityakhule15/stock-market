@@ -377,11 +377,27 @@ python manage.py ta_settle_memory
 
 Plan: [docs/INTEGRATION_PLAN.md](docs/INTEGRATION_PLAN.md). Third-party notice: [NOTICE](NOTICE).
 
+### Kronos + combined calls
+
+Optional local [Kronos](https://github.com/shiyu-coder/Kronos) candlestick forecasts (MIT, vendored under `third_party/kronos/`) run in `.venv-kronos` (CPU torch). Day-trader skill specs are vendored under `third_party/day-trader-skill/` with NSE adaptations for analyst (Yahoo quarterly facts) and insider (SEBI PIT via NSE).
+
+After each Scan, a background **model review** fills per-model calls and a **filter-mode consensus** (can only veto/re-rank PASS; never unblocks BLOCK; never places orders).
+
+```powershell
+python -m venv .venv-kronos
+.\.venv-kronos\Scripts\pip install -r requirements-kronos.txt
+python manage.py kronos_forecast --universe 15
+python manage.py calls_today
+python manage.py calls_today --json
+```
+
+UI: **Calls** page, Today card “Model calls” panel, Settings → Models & consensus. API: `GET /api/calls/today/`, `POST /api/calls/refresh/`.
+
 ---
 
 ## Third-party notices
 
-This project integrates **TradingAgents** by Tauric Research under the Apache License 2.0. See [NOTICE](NOTICE). Upstream source is used unchanged via the release wheel; StockScope provides Django glue only and does not place broker orders.
+This project integrates **TradingAgents** by Tauric Research under the Apache License 2.0, **Kronos** (MIT), and **day-trader-skill** SKILL.md specs (MIT). See [NOTICE](NOTICE). Upstream Kronos model code is vendored unmodified; StockScope provides Django glue only and does not place broker orders.
 
 ---
 

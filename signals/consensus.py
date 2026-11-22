@@ -260,6 +260,18 @@ def apply_consensus_filter(
     veto_thr = float(getattr(cfg, "CONSENSUS_VETO_THRESHOLD", -0.25))
     agree_thr = float(getattr(cfg, "CONSENSUS_AGREE_THRESHOLD", 0.15))
     veto_on = bool(getattr(cfg, "CONSENSUS_VETO_ENABLED", True))
+    try:
+        from portfolio.models import PortfolioSettings
+
+        stored = (PortfolioSettings.objects.first() or None)
+        mc = getattr(stored, "models_config", None) or {} if stored else {}
+        if isinstance(mc, dict) and "consensus_veto" in mc:
+            veto_on = bool(mc.get("consensus_veto"))
+        if isinstance(mc, dict) and mc.get("consensus_enabled") is False:
+            # Show-only: never veto via consensus
+            veto_on = False
+    except Exception:  # noqa: BLE001
+        pass
 
     meta = {
         "score": score,

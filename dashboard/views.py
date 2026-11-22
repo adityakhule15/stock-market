@@ -562,7 +562,69 @@ def research_report(request, run_id: int):
     return FileResponse(resolved.open("rb"), content_type="text/html")
 
 
+def calls_page(request):
+    """Combined multi-model calls board for today."""
+    from django.utils import timezone
+
+    from dashboard.groww import groww_links_for_signal
+    from signals.session_stage import apply_live_entry_status
+
+    today = timezone.localdate()
+    signals = list(
+        Signal.objects.filter(created_at__date=today)
+        .select_related("instrument")
+        .order_by("-probability", "-created_at")[:40]
+    )
+    for s in signals:
+        try:
+            apply_live_entry_status(s)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            s.groww = groww_links_for_signal(s)
+        except Exception:  # noqa: BLE001
+            s.groww = {}
+
+    ranked = []
+    for s in signals:
+        pipe = s.pipeline or {}
+        cs = pipe.get("consensus") or {}
+        mc = pipe.get("model_calls") or {}
+        gate_ok = (s.gate or {}).get("result") == "PASS" or (s.gate or {}).get("ok") is True
+        if not gate_ok and not cs.get("final_call"):
+            continue
+        ranked.append(
+            {
+                "symbol": s.instrument.symbol,
+                "side": s.side,
+                "probability": s.probability,
+                "tm": (mc.get("time_machine") or {}).get("call")
+                or (s.time_machine or {}).get("verdict"),
+                "kronos": (mc.get("kronos") or {}).get("call")
+                or (pipe.get("kronos") or {}).get("call"),
+                "agents": (mc.get("tradingagents") or {}).get("call")
+                or (pipe.get("agents") or {}).get("rating"),
+                "insider": (mc.get("insider") or {}).get("call")
+                or (pipe.get("insider") or {}).get("flag"),
+                "final_call": cs.get("final_call") or (("PASS" if gate_ok else "BLOCK")),
+                "score": cs.get("score"),
+                "reason": cs.get("reason") or cs.get("badge") or "",
+            }
+        )
+
+    return render(
+        request,
+        "dashboard/calls.html",
+        {
+            "signals": signals,
+            "ranked": ranked,
+            "allow_dead_content": True,
+        },
+    )
+
+
 def settings_page(request):
+    from forecast.adapter import load_kronos_settings
     from marketdata import indstocks as ind
     from portfolio.services import reconcile_paper_cash, refresh_life_status
     from research.adapter import load_agents_settings
@@ -570,6 +632,8 @@ def settings_page(request):
     ps = refresh_life_status(PortfolioSettings.get_solo(), alert=False)
     reconcile_paper_cash()
     tok = ind.token_status()
+    models_cfg = dict(ps.models_config or {})
+    kronos = load_kronos_settings()
     return render(
         request,
         "dashboard/settings.html",
@@ -579,6 +643,8 @@ def settings_page(request):
             "indstocks_token": bool(tok.get("has_token")),
             "indstocks_token_status": tok,
             "agents": load_agents_settings(),
+            "kronos": kronos,
+            "models_config": models_cfg,
             "allow_dead_content": True,
         },
     )

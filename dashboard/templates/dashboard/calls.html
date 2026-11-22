@@ -1,0 +1,85 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Calls — StockScope{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="row" style="justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+    <div>
+      <h2 style="margin:0 0 0.35rem">Combined calls</h2>
+      <p class="muted" style="margin:0;max-width:42rem;font-size:0.9rem">
+        Each candidate shows every model's call and parameters. Risk gate BLOCK stays final.
+        Consensus can only veto or re-rank PASS tickets. No broker orders.
+      </p>
+    </div>
+    <div class="row" style="gap:0.5rem">
+      <button type="button" id="btn-refresh-calls">Refresh models</button>
+      <span id="calls-status" class="muted"></span>
+    </div>
+  </div>
+</div>
+
+{% if ranked %}
+<div class="card" style="margin-top:1rem">
+  <h3 style="margin:0 0 0.75rem">Ranked calls (PASS / consensus)</h3>
+  <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
+    <thead>
+      <tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--line)">
+        <th style="padding:0.4rem">#</th>
+        <th style="padding:0.4rem">Symbol</th>
+        <th style="padding:0.4rem">LGBM</th>
+        <th style="padding:0.4rem">TM</th>
+        <th style="padding:0.4rem">Kronos</th>
+        <th style="padding:0.4rem">Agents</th>
+        <th style="padding:0.4rem">Insider</th>
+        <th style="padding:0.4rem">Combined</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in ranked %}
+      <tr style="border-bottom:1px solid var(--line)">
+        <td style="padding:0.45rem">{{ forloop.counter }}</td>
+        <td style="padding:0.45rem"><strong>{{ row.symbol }}</strong> {{ row.side }}</td>
+        <td style="padding:0.45rem">p={{ row.probability }}</td>
+        <td style="padding:0.45rem">{{ row.tm|default:"—" }}</td>
+        <td style="padding:0.45rem">{{ row.kronos|default:"—" }}</td>
+        <td style="padding:0.45rem">{{ row.agents|default:"—" }}</td>
+        <td style="padding:0.45rem">{{ row.insider|default:"—" }}</td>
+        <td style="padding:0.45rem">
+          <strong>{{ row.final_call|default:"—" }}</strong>
+          {% if row.score != None %}<span class="muted">({{ row.score }})</span>{% endif %}
+          <div class="muted" style="font-size:0.78rem">{{ row.reason|default:"" }}</div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card" style="margin-top:1rem">
+  <p class="muted">No signals today yet — run Scan on Today, then Refresh models.</p>
+</div>
+{% endif %}
+
+{% for s in signals %}
+  {% include "dashboard/_signal_card.html" with s=s %}
+{% empty %}
+{% endfor %}
+
+<script>
+const CSRF = '{{ csrf_token }}';
+document.getElementById('btn-refresh-calls')?.addEventListener('click', async function () {
+  const st = document.getElementById('calls-status');
+  st.textContent = 'Refreshing…';
+  try {
+    const resp = await fetch('/api/calls/refresh/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({}),
+    });
+    const data = await resp.json();
+    st.textContent = data.ok ? ('Enqueued ' + (data.count || 0) + ' — reload in ~30s') : (data.error || 'failed');
+  } catch (e) {
+    st.textContent = String(e);
+  }
+});
+</script>
+{% endblock %}
