@@ -308,6 +308,32 @@ def mark_signal_taken(
     units = q * mult
     product = getattr(signal, "product", None) or "CNC"
 
+    stop_px = signal.sl_trigger
+    target_px = signal.target1
+    # Never open an F&O position with a corrupted premium target (index ATR bug)
+    if getattr(signal, "strategy", "") == "fno_intraday":
+        from signals.fno import sane_option_target
+
+        reasons = signal.reasons if isinstance(signal.reasons, dict) else {}
+        fno = reasons.get("fno") or {}
+        buy = float(fno.get("buy_ltp") or entry or 0)
+        tgt_pct = float(fno.get("target_pct_of_premium") or getattr(cfg, "FNO_TARGET_PCT", 0.60))
+        sl_pct = float(fno.get("sl_pct_of_premium") or getattr(cfg, "FNO_PREMIUM_DROP_EXIT", 0.20))
+        sane_tgt = sane_option_target(
+            buy, float(fno.get("target_ltp") or signal.target1 or 0), tgt_pct=tgt_pct
+        )
+        target_px = Decimal(str(sane_tgt))
+        if fno.get("sl_ltp"):
+            stop_px = Decimal(str(float(fno["sl_ltp"])))
+        elif buy > 0 and (float(stop_px or 0) <= 0 or float(stop_px) > buy):
+            stop_px = Decimal(str(round(buy * (1 - sl_pct), 2)))
+        if abs(float(signal.target1 or 0) - sane_tgt) > 0.02:
+            signal.target1 = target_px
+            signal.target2 = target_px
+            signal.sl_trigger = stop_px
+            signal.sl_limit = stop_px
+            signal.save(update_fields=["target1", "target2", "sl_trigger", "sl_limit"])
+
     note = "practice track (wallet unchanged)" if is_dummy else "user confirmed Groww order"
     if mult > 1 and not is_dummy:
         note = f"user confirmed Groww | {q} lot×{mult} | lot_reserved"
@@ -318,11 +344,11 @@ def mark_signal_taken(
         side=signal.side,
         qty=q,
         entry_price=entry,
-        stop=signal.sl_trigger,
-        target=signal.target1,
+        stop=stop_px,
+        target=target_px,
         planned_entry=signal.entry_trigger,
-        planned_stop=signal.sl_trigger,
-        planned_target=signal.target1,
+        planned_stop=stop_px,
+        planned_target=target_px,
         mode=mode,
         notes=note,
         is_dummy=bool(is_dummy),
@@ -626,17 +652,65 @@ def add_manual_groww_order(
 
 def _cash_to_restore(pos: Position) -> Decimal:
     """Cash to put back when deleting an open position (undo fill wallet effects)."""
+    if getattr(pos, "is_dummy", False):
+        return Decimal("0")
     fills = list(pos.fills.all()) if hasattr(pos, "fills") else []
     if fills:
         # Undo each fill's net_cash_flow (BUY is negative → restoring adds cash)
         return -sum((Decimal(f.net_cash_flow) for f in fills), Decimal("0"))
-    if pos.reserved_cash is not None:
+    if pos.reserved_cash is not None and Decimal(str(pos.reserved_cash)) > 0:
         return Decimal(pos.reserved_cash)
     from portfolio.live import capital_reserved, is_fno
 
     if is_fno(pos) and "lot_reserved" not in (pos.notes or ""):
         return Decimal(str(pos.entry_price)) * Decimal(int(pos.qty))
     return capital_reserved(pos)
+
+
+def _recompute_open_buy_reserve(pos: Position) -> Decimal:
+    """Recompute BUY leg + reserved cash from current lots/entry. Returns wallet lock amount."""
+    from portfolio.charges import calc_leg_charges
+    from portfolio.live import is_fno, qty_units
+
+    units = qty_units(pos)
+    product = getattr(getattr(pos, "signal", None), "product", None) or ("NRML" if is_fno(pos) else "CNC")
+    is_opt = is_fno(pos) or str(product).upper() in {"NRML", "OPTIONS", "OPT"}
+    ch = calc_leg_charges(
+        side="BUY",
+        price=float(pos.entry_price),
+        units=int(units),
+        product=product,
+        is_option=is_opt,
+    )
+    turnover = Decimal(str(ch.turnover))
+    charges_total = Decimal(str(ch.total))
+    net = -(turnover + charges_total)
+    reserved = abs(net)
+
+    buy = pos.fills.filter(side="BUY").order_by("id").first() if hasattr(pos, "fills") else None
+    if buy is not None:
+        buy.qty = int(pos.qty)
+        buy.units = int(units)
+        buy.price = Decimal(str(pos.entry_price))
+        buy.turnover = turnover
+        buy.charges = ch.as_dict()
+        buy.charges_total = charges_total
+        buy.net_cash_flow = Decimal(str(round(float(net), 2)))
+        buy.save(
+            update_fields=[
+                "qty",
+                "units",
+                "price",
+                "turnover",
+                "charges",
+                "charges_total",
+                "net_cash_flow",
+            ]
+        )
+
+    if getattr(pos, "is_dummy", False):
+        return Decimal("0")
+    return Decimal(str(round(float(reserved), 2)))
 
 
 def delete_position(pos: Position) -> dict:
@@ -662,7 +736,7 @@ def set_position_dummy(pos: Position, is_dummy: bool) -> Position:
     """Mark order as dummy (practice) or original. Works for open and closed.
 
     Dummy trades are excluded from day book / Today P&L. Wallet is adjusted so
-    dummy does not affect equity/cash totals.
+    dummy does not affect equity/cash totals. Invested (entry×units) stays visible either way.
     """
     want = bool(is_dummy)
     if bool(pos.is_dummy) == want:
@@ -670,29 +744,37 @@ def set_position_dummy(pos: Position, is_dummy: bool) -> Position:
 
     ps = PortfolioSettings.get_solo()
     if pos.status == Position.Status.OPEN:
-        restore = _cash_to_restore(pos)
         if want:
-            # Leaving the real book — put reserved cash back
-            ps.cash = Decimal(ps.cash) + restore
+            # Original → dummy: unlock wallet, keep invested display via notional
+            unlock = _cash_to_restore(pos)
+            ps.cash = Decimal(ps.cash) + unlock
+            pos.is_dummy = True
+            pos.reserved_cash = Decimal("0")
+            pos.save(update_fields=["is_dummy", "reserved_cash"])
         else:
-            # Re-entering the real book — lock cash again
-            ps.cash = Decimal(ps.cash) - restore
+            # Dummy → original: flip first, then lock buy debit (charges included)
+            pos.is_dummy = False
+            lock = _recompute_open_buy_reserve(pos)
+            pos.reserved_cash = lock
+            pos.save(update_fields=["is_dummy", "reserved_cash"])
+            ps.cash = Decimal(ps.cash) - lock
         ps.save(update_fields=["cash", "updated_at"])
+        return pos
+
+    # Closed: reverse or re-apply realized P&L on equity / day / week / cash
+    pnl = Decimal(pos.pnl or 0)
+    if want:
+        ps.equity = Decimal(ps.equity) - pnl
+        ps.day_pnl = Decimal(ps.day_pnl) - pnl
+        ps.week_pnl = Decimal(ps.week_pnl) - pnl
+        ps.cash = Decimal(ps.cash) - pnl
     else:
-        # Closed: reverse or re-apply realized P&L on equity / day / week / cash
-        pnl = Decimal(pos.pnl or 0)
-        if want:
-            ps.equity = Decimal(ps.equity) - pnl
-            ps.day_pnl = Decimal(ps.day_pnl) - pnl
-            ps.week_pnl = Decimal(ps.week_pnl) - pnl
-            ps.cash = Decimal(ps.cash) - pnl
-        else:
-            ps.equity = Decimal(ps.equity) + pnl
-            ps.day_pnl = Decimal(ps.day_pnl) + pnl
-            ps.week_pnl = Decimal(ps.week_pnl) + pnl
-            ps.cash = Decimal(ps.cash) + pnl
-        ps.save(update_fields=["equity", "cash", "day_pnl", "week_pnl", "updated_at"])
-        refresh_life_status(ps, alert=False)
+        ps.equity = Decimal(ps.equity) + pnl
+        ps.day_pnl = Decimal(ps.day_pnl) + pnl
+        ps.week_pnl = Decimal(ps.week_pnl) + pnl
+        ps.cash = Decimal(ps.cash) + pnl
+    ps.save(update_fields=["equity", "cash", "day_pnl", "week_pnl", "updated_at"])
+    refresh_life_status(ps, alert=False)
 
     pos.is_dummy = want
     pos.save(update_fields=["is_dummy"])
@@ -722,8 +804,8 @@ def edit_position(
     target: float | None = None,
     qty: int | None = None,
 ) -> Position:
-    """Edit open order levels / lots. Adjusts cash for entry or qty changes."""
-    from portfolio.live import capital_reserved, qty_units
+    """Edit open order levels / lots. Always recomputes invested (entry×units) and wallet lock."""
+    from portfolio.live import position_notional
 
     if pos.status != Position.Status.OPEN:
         raise ValueError("only open positions can be edited")
@@ -731,7 +813,10 @@ def edit_position(
     old_cap = _cash_to_restore(pos)
 
     if entry_price is not None:
-        pos.entry_price = Decimal(str(entry_price))
+        ep = Decimal(str(entry_price))
+        if ep <= 0:
+            raise ValueError("entry_price must be > 0")
+        pos.entry_price = ep
     if stop is not None:
         pos.stop = Decimal(str(stop))
     if target is not None:
@@ -742,15 +827,21 @@ def edit_position(
             raise ValueError("qty must be >= 1")
         pos.qty = q
 
-    new_cap = capital_reserved(pos)
-    pos.reserved_cash = new_cap
-    if "lot_reserved" not in (pos.notes or "") and new_cap > old_cap:
-        pos.notes = ((pos.notes or "") + " | lot_reserved").strip(" |")
+    # Persist qty/entry first so qty_units / fill sync see new values
     pos.save()
-    delta = new_cap - old_cap
-    if delta != 0:
-        ps.cash = Decimal(ps.cash) - delta
-        ps.save(update_fields=["cash", "updated_at"])
+    new_cap = _recompute_open_buy_reserve(pos)
+    pos.reserved_cash = new_cap
+    if not pos.is_dummy and "lot_reserved" not in (pos.notes or ""):
+        pos.notes = ((pos.notes or "") + " | lot_reserved").strip(" |")
+    pos.save(update_fields=["reserved_cash", "notes"])
+
+    if not pos.is_dummy:
+        delta = new_cap - old_cap
+        if delta != 0:
+            ps.cash = Decimal(ps.cash) - delta
+            ps.save(update_fields=["cash", "updated_at"])
+
+    notional = position_notional(pos)
     # Keep linked signal in sync for display
     if pos.signal_id:
         sig = pos.signal
@@ -769,11 +860,9 @@ def edit_position(
         if qty is not None:
             sig.qty = pos.qty
             fields.append("qty")
-        if fields:
-            sig.capital_used = float(new_cap)
-            fields.append("capital_used")
-            sig.save(update_fields=list(dict.fromkeys(fields)))
-    _ = qty_units  # imported for clarity / future hooks
+        sig.capital_used = float(notional)
+        fields.append("capital_used")
+        sig.save(update_fields=list(dict.fromkeys(fields)))
     return pos
 
 
@@ -806,12 +895,14 @@ def reanalyze_position(pos: Position) -> dict:
             if df is not None and len(df) >= 60:
                 ind = add_indicators(df)
                 spot = float(ind["close"].iloc[-1])
-                atr = float(ind["atr14"].iloc[-1])
+                # Index ATR is for build_fno_plan context only — never for premium trail/target
+                underlying_atr = float(ind["atr14"].iloc[-1])
+                atr = None  # options management uses premium risk, not index ATR
                 plan = build_fno_plan(
                     underlying,
                     spot,
                     bullish=(opt.upper() in {"CE", "CALL"}),
-                    atr=atr,
+                    atr=underlying_atr,
                     capital=float(PortfolioSettings.get_solo().cash),
                     option_type=opt,
                 )
@@ -825,10 +916,29 @@ def reanalyze_position(pos: Position) -> dict:
     except (TypeError, ValueError):
         mark_f = 0.0
     if mark_f > 0:
+        entry_f = float(pos.entry_price)
+        stop_f = float(pos.stop)
+        target_f = float(pos.target)
+        repaired_target = False
+        # Repair absurd option targets saved by older index-ATR bug (e.g. tgt 2177 on ₹5 premium)
+        if is_fno(pos) and entry_f > 0:
+            from signals.fno import sane_option_target
+
+            tgt_pct = float(getattr(cfg, "FNO_TARGET_PCT", 0.60))
+            fixed = sane_option_target(entry_f, target_f, tgt_pct=tgt_pct)
+            if abs(fixed - target_f) > 0.02:
+                target_f = max(fixed, mark_f * 1.05) if pos.side == "BUY" and mark_f > 0 else fixed
+                pos.target = Decimal(str(round(target_f, 2)))
+                pos.save(update_fields=["target"])
+                repaired_target = True
+                if pos.signal_id:
+                    pos.signal.target1 = pos.target
+                    pos.signal.target2 = pos.target
+                    pos.signal.save(update_fields=["target1", "target2"])
         mgmt = suggest_management(
-            entry=float(pos.entry_price),
-            stop=float(pos.stop),
-            target=float(pos.target),
+            entry=entry_f,
+            stop=stop_f,
+            target=target_f,
             mark=mark_f,
             side=pos.side,
             atr=atr,
@@ -836,6 +946,7 @@ def reanalyze_position(pos: Position) -> dict:
         )
         prev = pos.last_mgmt_action or ""
         # Same call, refreshed levels: tighten SL / raise target when management says so (never widen SL)
+        # Exception: allow lowering target when repairing absurd option premiums.
         levels_updated = False
         sug_sl = mgmt.get("suggested_sl")
         sug_tg = mgmt.get("suggested_target")
@@ -849,10 +960,14 @@ def reanalyze_position(pos: Position) -> dict:
                     pos.stop = Decimal(str(round(float(sug_sl), 2)))
                     levels_updated = True
             if sug_tg is not None and float(sug_tg) > 0 and abs(float(sug_tg) - float(pos.target)) > 1e-6:
-                if pos.side == "BUY" and float(sug_tg) >= float(pos.target) - 1e-9:
+                if pos.side == "BUY" and (
+                    float(sug_tg) >= float(pos.target) - 1e-9 or repaired_target
+                ):
                     pos.target = Decimal(str(round(float(sug_tg), 2)))
                     levels_updated = True
-                elif pos.side == "SELL" and float(sug_tg) <= float(pos.target) + 1e-9:
+                elif pos.side == "SELL" and (
+                    float(sug_tg) <= float(pos.target) + 1e-9 or repaired_target
+                ):
                     pos.target = Decimal(str(round(float(sug_tg), 2)))
                     levels_updated = True
         except (TypeError, ValueError):

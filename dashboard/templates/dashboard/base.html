@@ -105,6 +105,7 @@
       toast(title + (body ? ': ' + body : ''));
     };
     (function indTokenGate() {
+      var DISMISS_KEY = 'stockscope.indTokenDismiss';
       function csrf() {
         var m = document.cookie.match(/csrftoken=([^;]+)/);
         return m ? decodeURIComponent(m[1]) : '';
@@ -127,9 +128,21 @@
       }
       fetch('/api/settings/indstocks-token/', { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
-        .then(function (d) { if (d && d.expired) showModal(d.help_url); })
+        .then(function (d) {
+          // Valid token already present → never popup
+          if (!d || d.has_token) return;
+          // Only when missing / expired / unusable
+          if (!(d.needs_token || d.expired)) return;
+          try {
+            if (sessionStorage.getItem(DISMISS_KEY) === '1') return;
+          } catch (e) {}
+          showModal(d.help_url);
+        })
         .catch(function () {});
-      document.getElementById('ind-token-modal-dismiss')?.addEventListener('click', hideModal);
+      document.getElementById('ind-token-modal-dismiss')?.addEventListener('click', function () {
+        try { sessionStorage.setItem(DISMISS_KEY, '1'); } catch (e) {}
+        hideModal();
+      });
       document.getElementById('ind-token-modal-save')?.addEventListener('click', function () {
         var inp = document.getElementById('ind-token-modal-input');
         var st = document.getElementById('ind-token-modal-status');
@@ -141,8 +154,11 @@
           headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
           body: JSON.stringify({ token: tok })
         }).then(function (r) { return r.json(); }).then(function (d) {
-          if (d.ok) { hideModal(); toast('INDstocks token saved'); }
-          else if (st) st.textContent = d.error || 'Failed';
+          if (d.ok) {
+            try { sessionStorage.removeItem(DISMISS_KEY); } catch (e) {}
+            hideModal();
+            toast('INDstocks token saved');
+          } else if (st) st.textContent = d.error || 'Failed';
         }).catch(function (e) { if (st) st.textContent = String(e); });
       });
     })();

@@ -160,13 +160,31 @@ def signals_partial(request):
             fno["loss_at_sl_rs"] = round(fno["buy_debit_rs"] - fno["sl_debit_rs"], 2)
             fno["profit_at_tgt_rs"] = round(fno["target_debit_rs"] - fno["buy_debit_rs"], 2)
             s.groww["fno"] = fno
-        # Heal tickets where equity exit planner wrote underlying-ATR stops onto premium
-        if s.ticket_kind == "fno" and fno.get("buy_ltp") and fno.get("sl_ltp") and fno.get("target_ltp"):
-            buy = float(fno["buy_ltp"])
-            sl = float(fno["sl_ltp"])
-            tgt = float(fno["target_ltp"])
-            broken = float(s.sl_trigger or 0) <= 0 or float(s.sl_trigger or 0) > buy or float(s.target1 or 0) < buy
-            if broken and sl > 0 and tgt > buy:
+        # Heal F&O tickets: equity ATR / index bumps must never sit on premium levels
+        if s.ticket_kind == "fno" and (fno.get("buy_ltp") or s.entry_trigger):
+            from signals.fno import sane_option_target
+
+            buy = float(fno.get("buy_ltp") or s.entry_trigger or 0)
+            sl_pct = float(fno.get("sl_pct_of_premium") or getattr(cfg, "FNO_PREMIUM_DROP_EXIT", 0.20))
+            tgt_pct = float(fno.get("target_pct_of_premium") or getattr(cfg, "FNO_TARGET_PCT", 0.60))
+            sl = float(fno.get("sl_ltp") or 0) or (round(buy * (1 - sl_pct), 2) if buy > 0 else 0)
+            # Prefer plan target_ltp when present; repair absurd values to +tgt_pct
+            tgt = sane_option_target(
+                buy, fno.get("target_ltp") or s.target1, tgt_pct=tgt_pct
+            )
+            if abs(float(fno.get("target_ltp") or 0) - tgt) > 0.02 and tgt > 0:
+                fno["target_ltp"] = tgt
+                lot = int(fno.get("lot_size") or s.qty or 1)
+                fno["target_debit_rs"] = round(tgt * lot, 2)
+                if fno.get("buy_debit_rs"):
+                    fno["profit_at_tgt_rs"] = round(fno["target_debit_rs"] - float(fno["buy_debit_rs"]), 2)
+                if isinstance(s.reasons, dict):
+                    s.reasons = {**s.reasons, "fno": {**(s.reasons.get("fno") or {}), **fno}}
+            broken_sl = buy > 0 and (
+                float(s.sl_trigger or 0) <= 0 or float(s.sl_trigger or 0) > buy * 1.01
+            )
+            broken_tgt = buy > 0 and abs(float(s.target1 or 0) - tgt) > 0.02
+            if buy > 0 and sl > 0 and tgt > buy and (broken_sl or broken_tgt):
                 s.entry_trigger = buy
                 s.entry_limit = buy
                 s.sl_trigger = sl

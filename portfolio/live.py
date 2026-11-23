@@ -76,10 +76,22 @@ def qty_label(pos: Position) -> str:
     return str(int(pos.qty))
 
 
+def position_notional(pos: Position) -> Decimal:
+    """Gross position size = entry LTP × units. Always derived from current lots/entry."""
+    units = qty_units(pos)
+    if units <= 0:
+        return Decimal("0")
+    return (Decimal(str(pos.entry_price)) * Decimal(units)).quantize(Decimal("0.01"))
+
+
 def capital_reserved(pos: Position) -> Decimal:
-    if getattr(pos, "reserved_cash", None) is not None:
-        return Decimal(str(pos.reserved_cash))
-    return Decimal(str(pos.entry_price)) * Decimal(qty_units(pos))
+    """Cash locked in the paper wallet (0 for practice/dummy). Not the UI Invested column."""
+    if getattr(pos, "is_dummy", False):
+        return Decimal("0")
+    stored = getattr(pos, "reserved_cash", None)
+    if stored is not None and Decimal(str(stored)) > 0:
+        return Decimal(str(stored))
+    return position_notional(pos)
 
 
 def unrealized_pnl(pos: Position, mark: float) -> float:
@@ -377,13 +389,15 @@ def enrich_position(pos: Position, chains: dict[str, dict] | None = None) -> dic
         "ltp": ltp,
         "open_pnl": open_pnl,
         "capital": float(capital_reserved(pos)),
-        "invested": float(capital_reserved(pos)),
+        # Invested always tracks entry × units so lot/entry edits and live polls stay correct
+        # (never use reserved_cash=0 from practice tracks).
+        "invested": float(position_notional(pos)),
         "current_value": (
             round(float(ltp) * qty_units(pos), 2) if ltp is not None else None
         ),
         "pnl_pct": (
-            round(100.0 * float(open_pnl) / float(capital_reserved(pos)), 2)
-            if open_pnl is not None and float(capital_reserved(pos)) > 0
+            round(100.0 * float(open_pnl) / float(position_notional(pos)), 2)
+            if open_pnl is not None and float(position_notional(pos)) > 0
             else None
         ),
         "product": getattr(pos.signal, "product", None) if pos.signal_id else None,

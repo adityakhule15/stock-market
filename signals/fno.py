@@ -53,6 +53,25 @@ EXPIRY_HOLIDAY_SHIFTS = {
 }
 
 
+def sane_option_target(
+    buy_ltp: float,
+    target: float | None = None,
+    *,
+    tgt_pct: float | None = None,
+) -> float:
+    """Premium-sane debit-option target. Repairs index-ATR corruption (e.g. ₹2177 on ₹5)."""
+    pct = float(tgt_pct if tgt_pct is not None else getattr(cfg, "FNO_TARGET_PCT", 0.60))
+    buy = float(buy_ltp or 0)
+    if buy <= 0:
+        return round(float(target or 0), 2)
+    plan = round(buy * (1.0 + pct), 2)
+    t = float(target or 0)
+    cap = buy * (1.0 + pct + 0.40)  # stretch ≤ ~+100%
+    if t <= buy or t > max(cap, buy * 3.0, plan * 2.0):
+        return plan
+    return round(t, 2)
+
+
 def _last_weekday_of_month(year: int, month: int, weekday: int) -> date:
     """weekday: Mon=0 … Sun=6 (datetime). NSE stock monthly ≈ last Tuesday."""
     last_day = calendar.monthrange(year, month)[1]

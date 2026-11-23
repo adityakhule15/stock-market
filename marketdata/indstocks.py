@@ -93,9 +93,15 @@ def _env_token() -> str:
 
 
 def access_token() -> str:
-    # Prefer DB token (Settings / popup); fall back to .env.
-    tok = _db_token() or _env_token()
-    return tok
+    """Return a non-expired token. Prefer DB (Settings / popup), then .env.
+
+    Expired leftovers in .env must not count as a usable token (and must not
+    keep the UI popup stuck as if a valid token were present).
+    """
+    for tok in (_db_token(), _env_token()):
+        if tok and not token_expired(tok):
+            return tok
+    return ""
 
 
 def _jwt_exp_unix(token: str) -> float | None:
@@ -170,22 +176,41 @@ def save_access_token(raw: str) -> dict[str, Any]:
 
 
 def token_status() -> dict[str, Any]:
-    """UI/API status for token popup (never returns the raw token)."""
+    """UI/API status for token popup (never returns the raw token).
+
+    Popup should open only when needs_token is True (no valid JWT).
+    """
     clear_expired_db_token()
-    tok = access_token()
+    db = _db_token()
+    env = _env_token()
+    tok = ""
+    source = "none"
+    if db and not token_expired(db):
+        tok, source = db, "db"
+    elif env and not token_expired(env):
+        tok, source = env, "env"
+    elif db:
+        source = "db_expired"
+    elif env:
+        source = "env_expired"
     exp = _jwt_exp_unix(tok) if tok else None
-    expired = token_expired(tok) if tok else True
-    source = "db" if _db_token() else ("env" if _env_token() else "none")
+    # If only an expired leftover exists, still surface its exp for the UI message
+    if exp is None:
+        leftover = db or env
+        if leftover:
+            exp = _jwt_exp_unix(leftover)
     exp_iso = None
     if exp is not None:
         exp_iso = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+    has_token = bool(tok)
     return {
-        "has_token": bool(tok) and not expired,
-        "expired": expired or not tok,
+        "has_token": has_token,
+        "expired": not has_token,
+        "needs_token": not has_token,
         "source": source,
         "expires_at": exp_iso,
         "help_url": TOKEN_HELP,
-        "data_enabled": data_enabled() if tok and not expired else False,
+        "data_enabled": data_enabled() if has_token else False,
     }
 
 

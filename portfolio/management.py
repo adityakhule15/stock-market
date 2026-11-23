@@ -102,8 +102,27 @@ def suggest_management(
             f"(threshold {prem_drop*100:.0f}%) — exit, do not average"
         )
     elif r >= 1.5:
-        # Trail by ATR after +1.5R
-        atr_v = float(atr or abs(entry - stop) * 0.5)
+        # Trail after +1.5R. For options, ATR must be in *premium* units —
+        # never use underlying index ATR (that produced targets like ₹2177 on a ₹5 option).
+        risk = abs(float(entry) - float(stop))
+        if is_option:
+            atr_v = max(risk * 0.5, float(entry) * 0.10)
+            # Cap option target at a sane premium multiple of entry (+60% plan, stretch to +100%)
+            tgt_cap = float(entry) * (1.0 + float(getattr(cfg_mod, "FNO_TARGET_PCT", 0.60)) + 0.40)
+            plan_tgt = float(entry) * (1.0 + float(getattr(cfg_mod, "FNO_TARGET_PCT", 0.60)))
+            # Repair corrupted targets from older bugs (index ATR bumps)
+            if side == "BUY" and float(target) > max(tgt_cap, float(mark) * 3, plan_tgt * 2):
+                new_target = max(plan_tgt, float(mark) * 1.1)
+                target = new_target
+            elif side == "SELL" and float(target) < min(float(entry) * 0.2, float(mark) * 0.5):
+                new_target = float(entry) * (1.0 - float(getattr(cfg_mod, "FNO_TARGET_PCT", 0.60)))
+                target = new_target
+        else:
+            atr_v = float(atr) if atr and float(atr) > 0 else risk * 0.5
+            # Guard: equity ATR should not dwarf the stock price itself
+            if atr and float(entry) > 0 and float(atr) > float(entry) * 0.15:
+                atr_v = risk * 0.5
+
         if side == "BUY":
             proposed = round_tick(mark - atr_v, "down")
         else:
@@ -111,9 +130,19 @@ def suggest_management(
         new_sl = tighten_stop(stop, proposed, side)
         action = "TRAIL_SL"
         reason = f"+{r:.2f}R — trail SL by ATR to {new_sl:.2f}"
-        # Optionally raise target with momentum
+        # Optionally raise target with momentum (premium-sane for options)
         if atr_v > 0:
-            bump = round_tick(target + (atr_v if side == "BUY" else -atr_v), "up" if side == "BUY" else "down")
+            bump = round_tick(
+                target + (atr_v if side == "BUY" else -atr_v),
+                "up" if side == "BUY" else "down",
+            )
+            if is_option:
+                if side == "BUY":
+                    bump = min(bump, float(entry) * (1.0 + float(getattr(cfg_mod, "FNO_TARGET_PCT", 0.60)) + 0.40))
+                    bump = max(bump, float(mark))
+                else:
+                    bump = max(bump, float(entry) * (1.0 - float(getattr(cfg_mod, "FNO_TARGET_PCT", 0.60)) - 0.40))
+                    bump = min(bump, float(mark))
             if (side == "BUY" and bump > target) or (side == "SELL" and bump < target):
                 new_target = bump
                 action = "RAISE_TARGET"

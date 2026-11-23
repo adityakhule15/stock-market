@@ -73,7 +73,7 @@
     <div class="kv" style="margin-top:0.5rem">
       <span>Entry</span><span>₹{{ s.entry_trigger }}</span>
       <span>Stop</span><span>₹{{ s.sl_trigger }}</span>
-      <span>Target</span><span>₹{{ s.target1 }}</span>
+      <span>Target</span><span>₹{% if s.ticket_kind == "fno" and fno.target_ltp %}{{ fno.target_ltp }}{% else %}{{ s.target1 }}{% endif %}</span>
       {% if s.ticket_kind == "fno" and fno %}
       <span>Contract</span><span>{{ fno.underlying }} {{ fno.strike }} {{ fno.option_type }} · 1 lot</span>
       <span>Debit</span><span>₹{{ fno.buy_debit_rs }}</span>
