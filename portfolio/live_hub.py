@@ -23,17 +23,19 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-REFRESH_SEC = 10.0
+REFRESH_SEC = 15.0
 IDLE_SLEEP_SEC = 25.0
-MAX_CHAIN_AGE_SEC = 50
+# Soft ceiling — actual age follows live_refresh_sec (min 15s to avoid IndStocks 429)
+MAX_CHAIN_AGE_SEC = 120
+MIN_REFRESH_SEC = 15
 
 
 def _settings_refresh_sec() -> float:
     try:
         from portfolio.models import PortfolioSettings
 
-        sec = int(PortfolioSettings.get_solo().live_refresh_sec or 10)
-        return float(max(5, min(120, sec)))
+        sec = int(PortfolioSettings.get_solo().live_refresh_sec or 15)
+        return float(max(MIN_REFRESH_SEC, min(120, sec)))
     except Exception:  # noqa: BLE001
         return float(REFRESH_SEC)
 
@@ -41,7 +43,7 @@ def _settings_refresh_sec() -> float:
 def set_refresh_sec(sec: int | float) -> float:
     """Update module refresh interval (also persisted via PortfolioSettings API)."""
     global REFRESH_SEC
-    REFRESH_SEC = float(max(5, min(120, int(sec))))
+    REFRESH_SEC = float(max(MIN_REFRESH_SEC, min(120, int(sec))))
     return REFRESH_SEC
 
 
@@ -172,6 +174,10 @@ class LiveMarksHub:
             else:
                 equity_syms.add(pos.instrument.symbol.upper())
 
+        # Chain age must track UI refresh — but never below MIN so we don't 429 IndStocks
+        refresh_sec = int(_settings_refresh_sec())
+        chain_max_age = max(MIN_REFRESH_SEC - 1, min(MAX_CHAIN_AGE_SEC, refresh_sec - 1))
+
         if underlyings:
             from marketdata.option_chain import get_chain_cached_or_live
 
@@ -179,7 +185,7 @@ class LiveMarksHub:
             for u in underlyings:
                 try:
                     chains[u] = get_chain_cached_or_live(
-                        u, expiry=None, max_age_sec=MAX_CHAIN_AGE_SEC, strike_count=50
+                        u, expiry=None, max_age_sec=chain_max_age, strike_count=50
                     )
                 except Exception as exc:  # noqa: BLE001
                     chains[u] = {"rows": [], "error": str(exc)[:120], "symbol": u}
@@ -252,6 +258,7 @@ class LiveMarksHub:
             "underlyings_fetched": sorted(underlyings),
             "subscribers": self._subscribers,
             "refresh_sec": _settings_refresh_sec(),
+            "_built_mono": time.monotonic(),
         }
 
 

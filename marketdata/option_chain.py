@@ -356,42 +356,52 @@ def get_chain_cached_or_live(
     symbol = normalize_symbol(symbol)
     strike_count = max(10, min(int(strike_count or 25), 80))
 
-    # INDstocks first (official live data) — still never places orders
+    # INDstocks first (official live data) — still never places orders.
+    # Always honor max_age_sec so Positions polls don't stampede into HTTP 429.
     try:
         from marketdata import indstocks as ind
 
-        if ind.data_enabled() and max_age_sec <= 90:
-            live = ind.fetch_option_chain(symbol, expiry, strike_count=strike_count)
+        snap = load_latest_snapshot(symbol, expiry)
+        if (
+            max_age_sec > 0
+            and snap
+            and snap.get("source") == "LIVE_INDSTOCKS"
+            and snap.get("as_of")
+            and (expiry is None or snap.get("expiry") == expiry)
+        ):
             try:
-                save_snapshot(live)
+                ts = datetime.fromisoformat(snap["as_of"])
+                age = (datetime.now(IST) - ts.astimezone(IST)).total_seconds()
+                if age <= max_age_sec:
+                    snap["from_cache"] = True
+                    return snap
             except Exception:  # noqa: BLE001
                 pass
-            return live
-        if ind.data_enabled():
-            snap = load_latest_snapshot(symbol, expiry)
-            # Only reuse narrow cache when we don't need a wider strike window
-            if (
-                strike_count <= 25
-                and snap
-                and snap.get("source") == "LIVE_INDSTOCKS"
-                and snap.get("as_of")
-            ):
+
+        if ind.data_enabled() or (ind.access_token() and not ind.token_expired()):
+            # During 429 cooldown data_enabled is False — still try memory cache via fetch
+            try:
+                live = ind.fetch_option_chain(symbol, expiry, strike_count=strike_count)
                 try:
-                    ts = datetime.fromisoformat(snap["as_of"])
-                    age = (datetime.now(IST) - ts.astimezone(IST)).total_seconds()
-                    if age <= max_age_sec:
-                        snap["from_cache"] = True
-                        return snap
+                    save_snapshot(live)
                 except Exception:  # noqa: BLE001
                     pass
-            live = ind.fetch_option_chain(symbol, expiry, strike_count=strike_count)
-            try:
-                save_snapshot(live)
-            except Exception:  # noqa: BLE001
-                pass
-            return live
+                return live
+            except Exception as exc:  # noqa: BLE001
+                if "429" in str(exc) or "rate-limit" in str(exc).lower() or "cooling down" in str(exc).lower():
+                    if snap and snap.get("source") == "LIVE_INDSTOCKS":
+                        snap = dict(snap)
+                        snap["from_cache"] = True
+                        snap["stale"] = True
+                        return snap
+                raise
     except Exception as exc:  # noqa: BLE001
-        logger.warning("INDstocks chain fallback to NSE: %s", exc)
+        # Quiet repeated 429 spam — one warning style line is enough per cooldown
+        msg = str(exc)
+        if "429" in msg or "rate-limit" in msg.lower() or "cooling down" in msg.lower():
+            logger.info("INDstocks chain skipped (%s) — NSE/cache fallback", msg[:100])
+        else:
+            logger.warning("INDstocks chain fallback to NSE: %s", exc)
 
     snap = load_latest_snapshot(symbol, expiry)
     if snap and snap.get("as_of"):

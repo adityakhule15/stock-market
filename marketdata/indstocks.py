@@ -44,6 +44,17 @@ _auth_fail_token = ""
 _AUTH_COOLDOWN_SEC = 900.0
 _auth_warned = False
 
+# HTTP 429 — pause IndStocks network calls; serve memory/DB cache / NSE
+_rate_limit_until = 0.0
+_RATE_LIMIT_COOLDOWN_SEC = 90.0
+_rate_limit_warned = False
+
+# Short in-process caches so Positions polling + scans don't stampede the API
+_chain_mem: dict[str, tuple[float, dict[str, Any]]] = {}
+_CHAIN_MEM_TTL_SEC = 20.0
+_expiries_mem: dict[str, tuple[float, list[str]]] = {}
+_EXPIRIES_MEM_TTL_SEC = 300.0
+
 # Seed IDs from INDstocks docs (refreshed via instruments when possible)
 _INDEX_SCRIP = {
     "NIFTY": "40000001",  # NIFTY 50
@@ -248,8 +259,24 @@ def _clear_auth_fail_if_token_changed(token: str) -> None:
         _auth_warned = False
 
 
+def _mark_rate_limited(detail: str = "HTTP 429") -> None:
+    global _rate_limit_until, _rate_limit_warned
+    _rate_limit_until = time.time() + _RATE_LIMIT_COOLDOWN_SEC
+    if not _rate_limit_warned:
+        logger.warning(
+            "INDstocks rate-limited (%s) — cooling down %ss (use cache/NSE).",
+            detail[:120],
+            int(_RATE_LIMIT_COOLDOWN_SEC),
+        )
+        _rate_limit_warned = True
+
+
+def rate_limited() -> bool:
+    return time.time() < _rate_limit_until
+
+
 def data_enabled() -> bool:
-    """True when a usable (non-expired, not in auth cooldown) token is set."""
+    """True when a usable (non-expired, not in auth/rate-limit cooldown) token is set."""
     clear_expired_db_token()
     tok = access_token()
     if not tok:
@@ -260,6 +287,8 @@ def data_enabled() -> bool:
         clear_expired_db_token()
         return False
     if time.time() < _auth_fail_until and tok == _auth_fail_token:
+        return False
+    if rate_limited():
         return False
     return True
 
@@ -288,6 +317,10 @@ def _headers() -> dict[str, str]:
 
 def _get(path: str, params: dict | None = None, *, raw: bool = False) -> Any:
     _assert_data_only(path)
+    if rate_limited():
+        raise RuntimeError(
+            f"INDstocks cooling down after 429 ({int(max(0, _rate_limit_until - time.time()))}s left)"
+        )
     token = access_token()
     r = requests.get(
         f"{BASE}{path}",
@@ -295,6 +328,9 @@ def _get(path: str, params: dict | None = None, *, raw: bool = False) -> Any:
         params=params or {},
         timeout=25,
     )
+    if r.status_code == 429:
+        _mark_rate_limited(r.text[:120] or "Too Many Requests")
+        raise RuntimeError("INDstocks HTTP 429 Too Many Requests")
     if r.status_code in {401, 403}:
         detail = ""
         try:
@@ -312,19 +348,27 @@ def _get(path: str, params: dict | None = None, *, raw: bool = False) -> Any:
             f"INDstocks auth HTTP {r.status_code}: {detail[:160]} — regenerate at {TOKEN_HELP}"
         )
     r.raise_for_status()
+    global _rate_limit_warned
+    _rate_limit_warned = False
     if raw:
         return r.text
     return r.json() if r.content else {}
 
 
 def list_expiries(underlying: str) -> list[str]:
-    """Upcoming expiries YYYY-MM-DD for an underlying."""
+    """Upcoming expiries YYYY-MM-DD for an underlying (cached ~5 min)."""
+    key = underlying.upper()
+    hit = _expiries_mem.get(key)
+    if hit and time.time() - hit[0] < _EXPIRIES_MEM_TTL_SEC:
+        return list(hit[1])
     data = _get(
         "/market/instruments/expiries",
-        {"underlying": underlying.upper(), "segment": "DERIVATIVE"},
+        {"underlying": key, "segment": "DERIVATIVE"},
     )
     rows = data.get("data") if isinstance(data, dict) else data
-    return [str(x) for x in (rows or [])]
+    out = [str(x) for x in (rows or [])]
+    _expiries_mem[key] = (time.time(), out)
+    return list(out)
 
 
 def _load_underlying_scrips(force: bool = False) -> dict[str, str]:
@@ -387,8 +431,12 @@ def underlying_scrip(symbol: str) -> tuple[str, str]:
 
 
 def fetch_option_chain(symbol: str, expiry: str | None = None, strike_count: int = 25) -> dict[str, Any]:
-    """Live option chain → same row shape as marketdata.option_chain.parse_chain."""
+    """Live option chain → same row shape as marketdata.option_chain.parse_chain.
+
+    Uses a short in-memory TTL so Positions 5–15s polls + scans share one fetch.
+    """
     code = symbol.upper().replace(".NS", "")
+    strike_count = max(10, min(int(strike_count or 25), 80))
     segment, scrip = underlying_scrip(code)
     if not scrip:
         raise RuntimeError(f"Missing underlying-scrip for {code}")
@@ -401,6 +449,30 @@ def fetch_option_chain(symbol: str, expiry: str | None = None, strike_count: int
     # Accept DD-Mon-YYYY from NSE-style callers
     if expiry and "-" in expiry and not expiry[:4].isdigit():
         expiry = datetime.strptime(expiry, "%d-%b-%Y").strftime("%Y-%m-%d")
+
+    # Prefer a cached wider chain when a narrower strike_count is requested
+    mem_key = f"{code}|{expiry}|{strike_count}"
+    now_m = time.time()
+    for k, (ts, cached) in list(_chain_mem.items()):
+        if now_m - ts > _CHAIN_MEM_TTL_SEC:
+            _chain_mem.pop(k, None)
+            continue
+        try:
+            k_code, k_exp, k_sc = k.split("|", 2)
+            if k_code == code and k_exp == str(expiry) and int(k_sc) >= strike_count:
+                out = dict(cached)
+                out["from_cache"] = True
+                return out
+        except Exception:  # noqa: BLE001
+            continue
+
+    if rate_limited():
+        hit = _chain_mem.get(mem_key)
+        if hit:
+            out = dict(hit[1])
+            out["from_cache"] = True
+            return out
+        raise RuntimeError("INDstocks rate-limited — no cached chain")
 
     raw = _get(
         "/market/option-chain",
@@ -450,7 +522,7 @@ def fetch_option_chain(symbol: str, expiry: str | None = None, strike_count: int
         )
     rows.sort(key=lambda x: x["strike"])
     now = datetime.now(IST)
-    return {
+    out = {
         "symbol": code,
         "expiry": exp_disp,
         "expiry_iso": exp_label,
@@ -463,6 +535,8 @@ def fetch_option_chain(symbol: str, expiry: str | None = None, strike_count: int
         "expiries": expiries,
         "from_cache": False,
     }
+    _chain_mem[mem_key] = (time.time(), out)
+    return out
 
 
 def get_ltp(scrip_codes: list[str]) -> dict[str, Any]:

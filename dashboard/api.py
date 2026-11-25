@@ -203,12 +203,23 @@ class PositionViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["get"])
     def live(self, request):
-        """One-shot live snapshot from the shared hub (prefer SSE /positions/stream/)."""
-        from portfolio.live_hub import get_hub
+        """One-shot live snapshot from the shared hub (prefer SSE /positions/stream/).
+
+        ``refresh=1`` rebuilds only when the hub snapshot is missing or older than
+        the configured live_refresh_sec — avoids IndStocks HTTP 429 on every poll.
+        """
+        from portfolio.live_hub import get_hub, _settings_refresh_sec
+
+        import time as _time
 
         hub = get_hub()
         snap, _fp = hub.latest()
-        if snap is None or request.query_params.get("refresh") == "1":
+        want_refresh = request.query_params.get("refresh") == "1"
+        stale = True
+        if snap and snap.get("_built_mono") is not None:
+            age = _time.monotonic() - float(snap["_built_mono"])
+            stale = age >= float(_settings_refresh_sec()) - 0.5
+        if snap is None or (want_refresh and stale):
             snap = hub.force_refresh()
         return Response(snap)
 
@@ -786,7 +797,7 @@ def live_refresh(request):
         sec = int((request.data or {}).get("live_refresh_sec") or (request.data or {}).get("seconds") or 10)
     except (TypeError, ValueError):
         return Response({"ok": False, "error": "seconds required"}, status=status.HTTP_400_BAD_REQUEST)
-    sec = max(5, min(120, sec))
+    sec = max(15, min(120, sec))  # floor 15s — IndStocks rate-limits faster polls
     ps.live_refresh_sec = sec
     ps.save(update_fields=["live_refresh_sec", "updated_at"])
     try:

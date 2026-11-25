@@ -8,9 +8,9 @@
     <p class="muted" style="margin:0.25rem 0 0">Broker book · Groww charges · live LTP while this page is open · paper records only</p>
   </div>
   <div class="row" style="gap:0.5rem;align-items:center">
-    <label class="muted" style="font-size:0.85rem" title="LTP poll interval">
+    <label class="muted" style="font-size:0.85rem" title="LTP poll interval (min 15s — avoids IndStocks rate limits)">
       Refresh (sec)
-      <input type="number" id="live-refresh-sec" min="5" max="120" step="1" value="{{ live_refresh_sec|default:10 }}" style="width:4.2rem" />
+      <input type="number" id="live-refresh-sec" min="15" max="120" step="1" value="{{ live_refresh_sec|default:15 }}" style="width:4.2rem" />
     </label>
     <button type="button" class="btn" id="btn-save-refresh" title="Save refresh interval">Save</button>
     <button type="button" class="btn" id="btn-advise-all" title="Local rules + model; Gemini coach only">Ask advisor: HOLD/SELL all</button>
@@ -406,22 +406,25 @@
   var POS_FILTER = 'open';
   var LAST_LTP = {};
   var LIVE_TIMER = null;
-  var LIVE_MS = Math.max(5000, Math.min(120000, (Number({{ live_refresh_sec|default:10 }}) || 10) * 1000));
+  var LIVE_INFLIGHT = false;
+  // Floor 15s — faster polls cause IndStocks HTTP 429 Too Many Requests
+  var LIVE_MS = Math.max(15000, Math.min(120000, (Number({{ live_refresh_sec|default:15 }}) || 15) * 1000));
 
   (function wireRefreshSec() {
     var inp = document.getElementById('live-refresh-sec');
     var btn = document.getElementById('btn-save-refresh');
     if (!inp || !btn) return;
+    if (Number(inp.value) < 15) inp.value = 15;
     btn.addEventListener('click', function () {
-      var sec = Math.max(5, Math.min(120, Number(inp.value) || 10));
+      var sec = Math.max(15, Math.min(120, Number(inp.value) || 15));
       inp.value = sec;
       api('/api/settings/live-refresh/', {
         method: 'POST',
         body: JSON.stringify({ live_refresh_sec: sec })
       }).then(function (res) {
         if (res.okHttp && res.data && res.data.ok) {
-          LIVE_MS = sec * 1000;
-          if (window.toast) toast('Refresh every ' + sec + 's');
+          LIVE_MS = Math.max(15000, Math.min(120000, (Number(res.data.live_refresh_sec) || sec) * 1000));
+          if (window.toast) toast('Refresh every ' + (LIVE_MS / 1000) + 's (min 15s)');
           if (typeof startLive === 'function') startLive();
         } else if (window.toast) toast('Could not save refresh');
       });
@@ -609,17 +612,26 @@
     setPosFilter(POS_FILTER);
   }
 
-  function pollLive() {
+  function pollLive(force) {
     var tr = document.getElementById('live-transport');
-    return fetch('/api/positions/live/?refresh=1', { credentials: 'same-origin' })
+    if (LIVE_INFLIGHT) return Promise.resolve(null);
+    LIVE_INFLIGHT = true;
+    // Soft by default — server only rebuilds when snapshot older than refresh_sec
+    var q = force ? '/api/positions/live/?refresh=1' : '/api/positions/live/?refresh=1';
+    return fetch(q + '&_=' + Date.now(), { credentials: 'same-origin', cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        if (!data || data.ok === false) {
+          if (tr) tr.textContent = 'live error — retrying…';
+          return data;
+        }
         applyLiveSnapshot(data);
         return data;
       })
       .catch(function () {
         if (tr) tr.textContent = 'live retry…';
-      });
+      })
+      .finally(function () { LIVE_INFLIGHT = false; });
   }
 
   function stopLive() {
@@ -637,14 +649,14 @@
       stopLive();
       return;
     }
-    pollLive();
     if (LIVE_TIMER) clearInterval(LIVE_TIMER);
+    pollLive(true);
     LIVE_TIMER = setInterval(function () {
       if (document.hidden) {
         stopLive();
         return;
       }
-      pollLive();
+      pollLive(false);
     }, LIVE_MS);
   }
 
