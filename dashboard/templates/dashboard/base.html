@@ -5,16 +5,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}StockScope India{% endblock %}</title>
+  <link rel="icon" href="{% static 'dashboard/favicon.svg' %}" type="image/svg+xml" />
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{% static 'dashboard/app.css' %}" />
   {% block extra_head %}{% endblock %}
 </head>
 <body class="life-{{ life_status|default:'alive' }}">
   <header>
-    <div class="brand">StockScope India</div>
+    <div class="brand">StockScope <span class="brand-mark">India</span></div>
     <nav>
       <a href="{% url 'signals' %}">Today</a>
+      <a href="{% url 'patterns' %}">Patterns</a>
       <a href="{% url 'positions' %}">Positions</a>
+      <a href="{% url 'transactions' %}">Transactions</a>
       <a href="{% url 'journal' %}">Journal</a>
       <a href="{% url 'results' %}">Results</a>
       <a href="{% url 'advisor' %}">Coach</a>
@@ -101,9 +107,50 @@
       el.classList.add('show');
       setTimeout(function(){ el.classList.remove('show'); }, 2800);
     }
-    window.ssNotify = function(title, body) {
-      toast(title + (body ? ': ' + body : ''));
+    var SS_ACTION_TITLES = {
+      EXIT_NOW: 'EXIT NOW — sell / square off',
+      EXIT_SOON: 'Exit soon — prepare to sell',
+      SELL: 'SELL — exit now',
+      RAISE_TARGET: 'Increase the target',
+      TRAIL_SL: 'Trail the stop',
+      MOVE_SL_BREAKEVEN: 'Move SL to breakeven',
+      BOOK_PARTIAL: 'Book partial profits',
+      HOLD: 'Hold'
     };
+    function ssFriendlyAction(action) {
+      var key = String(action || '').toUpperCase().replace(/\s+/g, '_');
+      return SS_ACTION_TITLES[key] || String(action || 'StockScope alert');
+    }
+    function ssDesktopNotify(title, body, urgent) {
+      try {
+        if (!('Notification' in window)) return;
+        var show = function () {
+          var n = new Notification(title, {
+            body: body || '',
+            requireInteraction: !!urgent,
+            tag: 'stockscope-' + String(title).slice(0, 40)
+          });
+          setTimeout(function () { try { n.close(); } catch (e) {} }, urgent ? 20000 : 10000);
+        };
+        if (Notification.permission === 'granted') show();
+        else if (Notification.permission !== 'denied') {
+          Notification.requestPermission().then(function (p) { if (p === 'granted') show(); });
+        }
+      } catch (e) {}
+    }
+    window.ssNotify = function(title, body) {
+      var friendly = ssFriendlyAction(title);
+      var urgent = /EXIT|SELL/i.test(String(title || ''));
+      toast(friendly + (body ? ': ' + body : ''));
+      ssDesktopNotify('StockScope · ' + friendly, body || '', urgent);
+    };
+    (function askNotifyPermission() {
+      try {
+        if ('Notification' in window && Notification.permission === 'default') {
+          setTimeout(function () { Notification.requestPermission(); }, 1500);
+        }
+      } catch (e) {}
+    })();
     (function indTokenGate() {
       var DISMISS_KEY = 'stockscope.indTokenDismiss';
       function csrf() {

@@ -36,9 +36,30 @@ DEFAULT_LGBM_PARAMS = {
 
 
 def fit_baseline(X: pd.DataFrame, y: pd.Series):
-    clf = LogisticRegression(max_iter=500)
-    clf.fit(X, y)
-    return {"algo": "logistic", "model": clf, "calibrator": None, "params": {}, "feature_cols": list(X.columns)}
+    """Scaled logistic baseline — avoids lbfgs non-convergence / iprint noise on raw features."""
+    import warnings
+
+    from sklearn.exceptions import ConvergenceWarning
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    clf = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("lr", LogisticRegression(max_iter=5000, solver="lbfgs")),
+        ]
+    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
+        warnings.filterwarnings("ignore", message=".*Unknown solver options: iprint.*")
+        clf.fit(X.fillna(0.0), y)
+    return {
+        "algo": "logistic",
+        "model": clf,
+        "calibrator": None,
+        "params": {"max_iter": 5000, "solver": "lbfgs", "scaled": True},
+        "feature_cols": list(X.columns),
+    }
 
 
 def fit_lgbm(
@@ -82,16 +103,21 @@ def predict_proba(bundle: dict, X: pd.DataFrame) -> np.ndarray:
     cols = bundle.get("feature_cols")
     if cols:
         X = X.reindex(columns=cols, fill_value=0.0)
-    arr = np.ascontiguousarray(X.to_numpy(dtype=np.float64, copy=True))
-    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    X = X.fillna(0.0)
     model = bundle["model"]
-    try:
-        raw = model.predict_proba(arr)[:, 1]
-    except OSError:
-        booster = getattr(model, "booster_", None) or getattr(model, "_Booster", None)
-        if booster is None:
-            raise
-        raw = np.asarray(booster.predict(arr), dtype=np.float64)
+    # Sklearn logistic / Pipeline was fit with feature names — pass a DataFrame
+    if bundle.get("algo") == "logistic" or hasattr(model, "feature_names_in_"):
+        raw = np.asarray(model.predict_proba(X)[:, 1], dtype=np.float64)
+    else:
+        arr = np.ascontiguousarray(X.to_numpy(dtype=np.float64, copy=True))
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        try:
+            raw = model.predict_proba(arr)[:, 1]
+        except OSError:
+            booster = getattr(model, "booster_", None) or getattr(model, "_Booster", None)
+            if booster is None:
+                raise
+            raw = np.asarray(booster.predict(arr), dtype=np.float64)
     cal = bundle.get("calibrator")
     return cal.transform(raw) if cal is not None else raw
 

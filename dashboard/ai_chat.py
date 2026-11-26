@@ -25,8 +25,9 @@ SYSTEM = """You are StockScope India Advisor — a personal NSE day/swing tradin
 Hard rules you must never break:
 - StockScope NEVER places broker orders. You only SUGGEST. The user places every order in Groww themselves.
 - Capital is about ₹2,000. Respect SURVIVAL (₹1,700) and DEAD (₹800) floors.
-- Prefer clear BUY / SKIP / WAIT language. Give entry trigger, SL, target, qty/lots, ₹ at risk, and Groww charges awareness when relevant.
+- Prefer clear BUY / SKIP / WAIT / HOLD / SELL language. Give entry trigger, SL, target, qty/lots, ₹ at risk, and Groww charges awareness when relevant.
 - For F&O debit options only (no selling premium / naked shorts). Square off intraday ideas by 15:10 IST.
+- When answering hold/sell questions, use the Patterns Desk snapshot (NIFTY/BANKNIFTY bias, pattern probs, position advice) plus open positions in context.
 - If the edge is a coin flip, say "Best trade is no trade".
 - Be concise. Use IST. No US stocks. No averaging down or revenge trades.
 - If the user asks you to place/modify/cancel an order via API, refuse.
@@ -104,6 +105,13 @@ def _context_blob() -> str:
         events = event_flags()
     except Exception:  # noqa: BLE001
         pass
+    patterns_blob = ""
+    try:
+        from indexdesk.coach_context import patterns_context_blob
+
+        patterns_blob = " " + patterns_context_blob(refresh_if_stale=False)
+    except Exception:  # noqa: BLE001
+        patterns_blob = ""
     return (
         f"Wallet usable ₹{w['wallet']:.0f} (equity ₹{w['equity']:.0f}, cash ₹{w['cash']:.0f}, "
         f"cap ₹{w['hard_cap']:.0f}, life={w['life_status']}). "
@@ -111,6 +119,7 @@ def _context_blob() -> str:
         f"Events: {events.get('reason', 'none')}. "
         f"DEAD floor ₹{cfg.DEAD_FLOOR}, SURVIVAL ₹{cfg.SURVIVAL_EQUITY}. "
         + _open_positions_blob()
+        + patterns_blob
     )
 
 
@@ -129,6 +138,27 @@ def _local_reply(message: str, history: list[dict] | None = None) -> str:
             "I won't place orders. StockScope is signals-only — copy levels into Groww yourself. "
             + ctx
         )
+    if any(x in msg for x in ("hold", "should i sell", "exit", "square off", "book")):
+        try:
+            from dashboard.position_advise import advise_all_open
+
+            adv = advise_all_open()
+            lines = []
+            for a in (adv.get("rows") or [])[:6]:
+                lines.append(
+                    f"#{a.get('position_id')} {a.get('contract') or a.get('symbol')}: "
+                    f"{a.get('verdict') or a.get('action') or a.get('label')} — "
+                    f"{a.get('reason') or a.get('note') or a.get('summary') or ''}"
+                )
+            body = "\n".join(lines) if lines else "No open positions to advise on."
+            return (
+                "Hold/sell from rules + Patterns Desk (never auto-exits for you):\n"
+                + body
+                + "\n"
+                + ctx
+            )
+        except Exception:  # noqa: BLE001
+            return "Use Patterns tab + Positions for hold/sell. " + ctx
     if "nifty" in msg and ("put" in msg or "pe" in msg or "call" in msg or "ce" in msg):
         side = "PUT" if ("put" in msg or " pe" in msg) else "CALL"
         return (

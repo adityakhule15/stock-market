@@ -193,17 +193,38 @@ def train_meta_candidate(min_n: int | None = None) -> dict[str, Any]:
         return {"promoted": False, "reason": "insufficient class variety for OOS", "n": n}
 
     try:
-        from sklearn.linear_model import LogisticRegression
+        import warnings
 
-        clf = LogisticRegression(max_iter=200)
-        clf.fit(Xtr, ytr)
-        te_acc = float(clf.score(Xte, yte))
-        maj = int(np.bincount(ytr).argmax())
-        base = float((yte == maj).mean())
-        beats = te_acc > base + 0.02
-        # Refit on all data for the artifact we may promote
-        clf_full = LogisticRegression(max_iter=200)
-        clf_full.fit(X, y)
+        import pandas as pd
+        from sklearn.exceptions import ConvergenceWarning
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+
+        cols = list(FEATURE_KEYS)
+        Xtr_df = pd.DataFrame(Xtr, columns=cols)
+        Xte_df = pd.DataFrame(Xte, columns=cols)
+        X_df = pd.DataFrame(X, columns=cols)
+
+        def _make_clf():
+            return Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    ("lr", LogisticRegression(max_iter=5000, solver="lbfgs")),
+                ]
+            )
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            warnings.filterwarnings("ignore", message=".*Unknown solver options: iprint.*")
+            clf = _make_clf()
+            clf.fit(Xtr_df, ytr)
+            te_acc = float(clf.score(Xte_df, yte))
+            maj = int(np.bincount(ytr).argmax())
+            base = float((yte == maj).mean())
+            beats = te_acc > base + 0.02
+            clf_full = _make_clf()
+            clf_full.fit(X_df, y)
         return {
             "promoted": False,
             "candidate_ok": beats,
@@ -232,7 +253,7 @@ def maybe_promote_meta(min_n: int | None = None) -> dict[str, Any]:
 
     bundle = {
         "algo": "logistic_meta",
-        "params": {"max_iter": 200},
+        "params": {"max_iter": 5000, "solver": "lbfgs", "scaled": True},
         "clf": clf,
         "feature_keys": list(FEATURE_KEYS),
     }
@@ -286,7 +307,10 @@ def predict_meta_win_prob(order: dict, *, regime: dict | None = None) -> float |
     elif len(feat) > len(keys):
         feat = feat[: len(keys)]
     try:
-        proba = clf.predict_proba(np.asarray([feat], dtype=float))[0]
+        import pandas as pd
+
+        row = pd.DataFrame([feat], columns=list(keys))
+        proba = clf.predict_proba(row)[0]
         classes = list(getattr(clf, "classes_", [0, 1]))
         if 1 in classes:
             return float(proba[classes.index(1)])

@@ -71,11 +71,11 @@ def obv(df: pd.DataFrame) -> pd.Series:
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     c = out["close"]
-    out["ret_1"] = c.pct_change(1)
-    out["ret_3"] = c.pct_change(3)
-    out["ret_5"] = c.pct_change(5)
-    out["ret_10"] = c.pct_change(10)
-    out["ret_20"] = c.pct_change(20)
+    out["ret_1"] = c.pct_change(1, fill_method=None)
+    out["ret_3"] = c.pct_change(3, fill_method=None)
+    out["ret_5"] = c.pct_change(5, fill_method=None)
+    out["ret_10"] = c.pct_change(10, fill_method=None)
+    out["ret_20"] = c.pct_change(20, fill_method=None)
     out["gap_pct"] = out["open"] / c.shift(1) - 1
     out["overnight_ret"] = out["open"] / c.shift(1) - 1
     out["intraday_ret"] = c / out["open"] - 1
@@ -84,21 +84,21 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         e = ema(c, span)
         out[f"ema{span}"] = e
         out[f"ema{span}_dist"] = c / e - 1
-    out["ema20_slope"] = out["ema20"].pct_change(5)
+    out["ema20_slope"] = out["ema20"].pct_change(5, fill_method=None)
     out["adx"] = adx(out)
     out["rsi14"] = rsi(c)
     out["macd_hist"] = macd_hist(c)
     out["stoch"] = stochastic(out)
-    out["roc10"] = c.pct_change(10)
+    out["roc10"] = c.pct_change(10, fill_method=None)
     out["atr14"] = atr(out)
     out["atr_pct"] = out["atr14"] / c
     pct_b, bw = bollinger(c)
     out["bb_pctb"] = pct_b
     out["bb_bw"] = bw
-    out["rvol20"] = c.pct_change().rolling(20).std() * np.sqrt(252)
+    out["rvol20"] = c.pct_change(fill_method=None).rolling(20).std() * np.sqrt(252)
     out["vol_z"] = (out["volume"] - out["volume"].rolling(20).mean()) / out["volume"].rolling(20).std()
     out["obv"] = obv(out)
-    out["obv_slope"] = out["obv"].pct_change(5)
+    out["obv_slope"] = out["obv"].pct_change(5, fill_method=None)
     out["dist_20d_high"] = c / out["high"].rolling(20).max() - 1
     out["dist_20d_low"] = c / out["low"].rolling(20).min() - 1
     out["dist_52w_high"] = c / out["high"].rolling(252, min_periods=50).max() - 1

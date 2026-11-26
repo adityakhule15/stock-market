@@ -2,8 +2,57 @@
 {% load static %}
 {% block title %}Today — StockScope{% endblock %}
 {% block content %}
-<h1>Today</h1>
-<p class="muted">Ranked ideas that fit your wallet after Groww charges. You place every order yourself.</p>
+<div class="desk-toolbar">
+  <div>
+    <h1>Today</h1>
+    <p class="page-sub">Only place to take trades. Index options follow Patterns bias (one side). You place every order in Groww.</p>
+  </div>
+  <div class="row">
+    <span class="badge age"><span class="live-dot" aria-hidden="true"></span> Desk</span>
+    <button type="button" id="btn-scan">Scan now</button>
+    <button type="button" id="btn-tomorrow" class="secondary">Buy for tomorrow</button>
+  </div>
+</div>
+<span id="scan-status" class="muted" style="display:block;margin:-0.35rem 0 0.85rem;font-size:0.85rem"></span>
+
+<div class="index-grid" id="index-strip" aria-label="Index strip">
+  <div class="index-card active" data-symbol="NIFTY" id="idx-NIFTY">
+    <div class="card-top">
+      <span class="card-symbol">NIFTY 50</span>
+      <span class="card-exchange">NSE</span>
+    </div>
+    <div class="card-price mono" id="nifty-price">—</div>
+    <div class="card-change mono" id="nifty-chg-wrap"><span id="nifty-chg">…</span></div>
+    <div class="card-hl"><span>Source: quotes</span><span id="nifty-age"></span></div>
+  </div>
+  <div class="index-card" data-symbol="SENSEX" id="idx-SENSEX">
+    <div class="card-top">
+      <span class="card-symbol">SENSEX</span>
+      <span class="card-exchange">BSE</span>
+    </div>
+    <div class="card-price mono" id="sensex-price">—</div>
+    <div class="card-change mono" id="sensex-chg-wrap"><span id="sensex-chg">…</span></div>
+    <div class="card-hl"><span>Source: quotes</span><span id="sensex-age"></span></div>
+  </div>
+  <div class="index-card" data-symbol="BANKNIFTY" id="idx-BANKNIFTY">
+    <div class="card-top">
+      <span class="card-symbol">BANK NIFTY</span>
+      <span class="card-exchange">NSE</span>
+    </div>
+    <div class="card-price mono" id="bank-price">—</div>
+    <div class="card-change mono" id="bank-chg-wrap"><span id="bank-chg">…</span></div>
+    <div class="card-hl"><span>Source: quotes</span><span id="bank-age"></span></div>
+  </div>
+  <div class="index-card" data-symbol="INDIAVIX" id="idx-INDIAVIX">
+    <div class="card-top">
+      <span class="card-symbol">INDIA VIX</span>
+      <span class="card-exchange" style="background:rgba(245,158,11,0.15);color:var(--amber)">Fear</span>
+    </div>
+    <div class="card-price mono" id="vix-price">—</div>
+    <div class="card-change mono" id="vix-chg-wrap"><span id="vix-chg">…</span></div>
+    <div class="card-hl"><span id="vix-status">Regime</span><span id="vix-age"></span></div>
+  </div>
+</div>
 
 <div class="tabs" id="board-tabs">
   <button type="button" data-tab="all" class="active">All</button>
@@ -11,17 +60,15 @@
   <button type="button" data-tab="fno">Options</button>
 </div>
 
-<div class="row" style="margin-bottom:0.75rem">
-  <button type="button" id="btn-scan">Scan now</button>
-  <button type="button" id="btn-tomorrow" class="secondary">Buy for tomorrow</button>
-  <span id="scan-status" class="muted"></span>
-</div>
-
-<div id="signals"
-     hx-get="{% url 'signals_partial' %}?tab=all"
-     hx-trigger="load"
-     hx-swap="innerHTML">
-  <div class="card muted">Loading…</div>
+<div class="today-workspace today-workspace-single">
+  <div id="signals-col">
+    <div id="signals"
+         hx-get="{% url 'signals_partial' %}?tab=all"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="card muted">Loading tickets…</div>
+    </div>
+  </div>
 </div>
 {% endblock %}
 

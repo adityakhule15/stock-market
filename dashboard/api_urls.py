@@ -38,4 +38,10 @@ urlpatterns = [
     path("journal/day-book/", api.day_book, name="day_book"),
     path("journal/retrain/", api.retrain_now, name="retrain_now"),
     path("journal/export.csv", api.journal_export_csv, name="journal_export_csv"),
+    path("wallet/rebuild/", api.wallet_rebuild, name="wallet_rebuild"),
+    path("patterns/board/", api.patterns_board, name="patterns_board"),
+    path("patterns/refresh/", api.patterns_refresh, name="patterns_refresh"),
+    path("patterns/backfill/", api.patterns_backfill, name="patterns_backfill"),
+    path("patterns/train/", api.patterns_train, name="patterns_train"),
+    path("patterns/<str:underlying>/", api.patterns_one, name="patterns_one"),
 ]

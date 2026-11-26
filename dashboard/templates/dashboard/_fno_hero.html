@@ -1,0 +1,96 @@
+{% with fno=s.reasons.fno cs=s.card_state links=s.groww meta=s.rank_meta %}
+{% if fno.option_type == "PE" %}
+<div class="signal-box BEARISH" id="sig-{{ s.id }}" data-state="{{ cs.state }}" data-underlying="{{ fno.underlying|default:'' }}" data-hero="1">
+  <div>
+    <div class="signal-title-row">{{ fno.underlying }} · Options · same day</div>
+    <div class="signal-action BEARISH">BUY PE</div>
+    <div class="signal-sub">
+      <span class="conf-pill {{ cs.state|upper }}">{{ cs.label }}</span>
+      <span style="font-weight:700">{{ fno.underlying }} {{ fno.strike }} PE</span>
+    </div>
+  </div>
+{% else %}
+<div class="signal-box BULLISH" id="sig-{{ s.id }}" data-state="{{ cs.state }}" data-underlying="{{ fno.underlying|default:'' }}" data-hero="1">
+  <div>
+    <div class="signal-title-row">{{ fno.underlying }} · Options · same day</div>
+    <div class="signal-action BULLISH">BUY CE</div>
+    <div class="signal-sub">
+      <span class="conf-pill {{ cs.state|upper }}">{{ cs.label }}</span>
+      <span style="font-weight:700">{{ fno.underlying }} {{ fno.strike }} CE</span>
+    </div>
+  </div>
+{% endif %}
+
+  <div>
+    <div class="levels-grid">
+      <div class="level-cell">
+        <div class="level-lbl">Entry</div>
+        <div class="level-val entry mono">₹{{ s.entry_trigger }}</div>
+      </div>
+      <div class="level-cell">
+        <div class="level-lbl">Target (+{{ fno.tgt_pct_label|default:"60" }}%)</div>
+        <div class="level-val target mono">₹{% if fno.target_ltp %}{{ fno.target_ltp }}{% else %}{{ s.target1 }}{% endif %}</div>
+      </div>
+      <div class="level-cell">
+        <div class="level-lbl">Stop (−{{ fno.sl_pct_label|default:"20" }}%)</div>
+        <div class="level-val sl mono">₹{{ s.sl_trigger }}</div>
+      </div>
+      <div class="level-cell">
+        <div class="level-lbl">Debit / lot</div>
+        <div class="level-val entry mono">₹{{ fno.buy_debit_rs }}</div>
+      </div>
+    </div>
+    <div class="reasons-list">
+      {% if s.display_profit != None %}
+      <span class="reason-item">Target net <strong class="pnl-up">+₹{{ s.display_profit }}</strong> after charges</span>
+      {% endif %}
+      <span class="reason-item">Stop risk <strong class="pnl-down">−₹{{ s.display_loss }}</strong> ({{ s.loss_pct_wallet }}% wallet)</span>
+      {% if s.display_charges != None %}
+      <span class="reason-item">Charges ₹{{ s.display_charges }}</span>
+      {% endif %}
+      {% if cs.reason %}
+      <span class="reason-item">{{ cs.reason }}</span>
+      {% endif %}
+      {% if fno.pricing %}
+      <span class="reason-item">{{ fno.pricing }}{% if fno.chain_as_of %} · {{ fno.chain_as_of }}{% endif %}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="signal-side-metrics">
+    <div class="metric-row">
+      <span>Contract</span>
+      <span class="mono">{{ fno.underlying }} {{ fno.strike }} {{ fno.option_type }}</span>
+    </div>
+    <div class="metric-row">
+      <span>Lot</span>
+      <span class="mono">{{ fno.lot_size|default:"1" }}</span>
+    </div>
+    <div class="metric-row">
+      <span>Expiry</span>
+      <span class="mono">{{ fno.expiry_label|default:fno.expiry|default:"—" }}</span>
+    </div>
+    {% if meta.score != None %}
+    <div class="metric-row">
+      <span>Score</span>
+      <span class="mono">{{ meta.score }}</span>
+    </div>
+    {% endif %}
+    {% if cs.show_copy %}
+    <div class="checklist" id="check-{{ s.id }}" style="margin-top:4px">
+      <label><input type="checkbox" class="ck" data-id="{{ s.id }}"> Stop in Groww</label>
+      <label><input type="checkbox" class="ck" data-id="{{ s.id }}"> Size matches</label>
+      <label><input type="checkbox" class="ck" data-id="{{ s.id }}"> Not chasing</label>
+    </div>
+    <button type="button" class="btn" id="copy-{{ s.id }}" disabled style="margin-top:6px;width:100%"
+            onclick="copyGrowwTicket({{ s.id }}, '{{ links.order_detail|default:'' }}', '{{ links.mode|default:'' }}')">Copy for Groww</button>
+    <div class="row" style="margin-top:6px">
+      <button type="button" class="btn secondary" onclick="confirmOrder({{ s.id }}, true)">I placed it</button>
+      <button type="button" class="btn secondary" onclick="confirmOrder({{ s.id }}, false)">Skip</button>
+    </div>
+    {% elif cs.show_practice %}
+    <button type="button" class="btn practice" style="margin-top:6px;width:100%" onclick="trackPractice({{ s.id }})">Track as practice</button>
+    {% endif %}
+  </div>
+</div>
+{% endwith %}

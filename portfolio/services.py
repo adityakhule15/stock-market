@@ -781,19 +781,124 @@ def set_position_dummy(pos: Position, is_dummy: bool) -> Position:
     return pos
 
 
-def reconcile_paper_cash() -> PortfolioSettings:
-    """Clamp runaway cash (e.g. legacy delete restored full lot when only premium×1 was locked)."""
+def rebuild_wallet_from_fills(*, start: float | None = None) -> dict:
+    """Recompute equity/cash from start_equity + all non-dummy OrderFill nets.
+
+    Fixes drifted paper wallets (e.g. double-applied P&L, edit/add-lot quirks).
+    Dummy/practice fills never move the wallet.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
     ps = PortfolioSettings.get_solo()
-    opens = list(Position.objects.filter(status=Position.Status.OPEN))
+    start_eq = Decimal(str(start if start is not None else (ps.start_equity or cfg.CAPITAL)))
+    if start_eq <= 0:
+        start_eq = Decimal(str(cfg.CAPITAL))
+
+    fill_net = Decimal("0")
+    for f in OrderFill.objects.select_related("position").order_by("id"):
+        if f.position_id and getattr(f.position, "is_dummy", False):
+            continue
+        fill_net += Decimal(str(f.net_cash_flow or 0))
+
+    opens = list(
+        Position.objects.filter(status=Position.Status.OPEN, is_dummy=False).select_related(
+            "instrument", "signal"
+        )
+    )
     locked = sum((_cash_to_restore(p) for p in opens), Decimal("0"))
-    # With no opens, cash should equal equity for a clean paper book
-    if not opens and abs(float(ps.cash) - float(ps.equity)) > 0.05:
-        ps.cash = Decimal(ps.equity)
-        ps.save(update_fields=["cash", "updated_at"])
-    elif opens and float(ps.cash) > float(ps.equity):
-        ps.cash = max(Decimal("0"), Decimal(ps.equity) - locked)
-        ps.save(update_fields=["cash", "updated_at"])
-    return ps
+    # Cash = start + all fill nets (open BUYs already debit cash).
+    # Equity at cost = cash + open locks (open debit is capital in positions, not lost).
+    cash = (start_eq + fill_net).quantize(Decimal("0.01"))
+    if cash < 0:
+        cash = Decimal("0.00")
+    equity = (cash + locked).quantize(Decimal("0.01"))
+
+    # Day / week P&L from closed original positions
+    today = timezone.localdate()
+    week_start = today - timedelta(days=today.weekday())
+    day_pnl = Decimal("0")
+    week_pnl = Decimal("0")
+    consec = 0
+    closed = list(
+        Position.objects.filter(status=Position.Status.CLOSED, is_dummy=False)
+        .exclude(closed_at=None)
+        .order_by("-closed_at")
+    )
+    for p in closed:
+        pnl = Decimal(str(p.pnl or 0))
+        cd = timezone.localtime(p.closed_at).date() if p.closed_at else None
+        if cd == today:
+            day_pnl += pnl
+        if cd and cd >= week_start:
+            week_pnl += pnl
+
+    # Consecutive losses from most recent closed trades
+    for p in closed:
+        pnl = float(p.pnl or 0)
+        if pnl < 0:
+            consec += 1
+        else:
+            break
+
+    before = {
+        "equity": float(ps.equity),
+        "cash": float(ps.cash),
+        "day_pnl": float(ps.day_pnl),
+        "week_pnl": float(ps.week_pnl),
+    }
+    ps.start_equity = start_eq
+    ps.equity = equity
+    ps.cash = cash
+    ps.day_pnl = day_pnl.quantize(Decimal("0.01"))
+    ps.week_pnl = week_pnl.quantize(Decimal("0.01"))
+    ps.consecutive_losses = consec
+    ps.life_status = cfg.life_status_for_equity(float(equity))
+    # Auto-clear kill only when we were inflated/deflated and equity is healthy again
+    if float(equity) > float(cfg.SURVIVAL_EQUITY) and ps.life_status == PortfolioSettings.LifeStatus.ALIVE:
+        ps.kill_switch = False
+        ps.lockout_until = None
+    ps.save()
+    record_equity_snapshot(mode="paper")
+    after = {
+        "equity": float(ps.equity),
+        "cash": float(ps.cash),
+        "day_pnl": float(ps.day_pnl),
+        "week_pnl": float(ps.week_pnl),
+        "life_status": ps.life_status,
+        "kill_switch": bool(ps.kill_switch),
+    }
+    return {
+        "ok": True,
+        "start_equity": float(start_eq),
+        "fill_net": float(fill_net),
+        "open_locked": float(locked),
+        "n_opens": len(opens),
+        "before": before,
+        "after": after,
+        "delta_equity": round(after["equity"] - before["equity"], 2),
+    }
+
+
+def reconcile_paper_cash() -> PortfolioSettings:
+    """Keep paper wallet honest: rebuild from fills, then clamp cash vs open locks."""
+    try:
+        rebuild_wallet_from_fills()
+    except Exception:  # noqa: BLE001
+        logger = __import__("logging").getLogger(__name__)
+        logger.exception("rebuild_wallet_from_fills failed; falling back to clamp")
+        ps = PortfolioSettings.get_solo()
+        opens = list(Position.objects.filter(status=Position.Status.OPEN))
+        locked = sum((_cash_to_restore(p) for p in opens), Decimal("0"))
+        if not opens and abs(float(ps.cash) - float(ps.equity)) > 0.05:
+            ps.cash = Decimal(ps.equity)
+            ps.save(update_fields=["cash", "updated_at"])
+        elif opens and float(ps.cash) > float(ps.equity):
+            ps.cash = max(Decimal("0"), Decimal(ps.equity) - locked)
+            ps.save(update_fields=["cash", "updated_at"])
+        return ps
+    return PortfolioSettings.get_solo()
 
 
 def edit_position(
@@ -989,10 +1094,17 @@ def reanalyze_position(pos: Position) -> dict:
                 sig.save(update_fields=["sl_trigger", "sl_limit", "target1"])
             if action_changed:
                 try:
-                    from notifications.telegram import send_message
+                    from notifications.desktop import alert_management
 
-                    send_message(
-                        f"StockScope action → {mgmt['action']} on {pos.instrument.symbol}: {mgmt.get('reason')}"
+                    alert_management(
+                        action=str(mgmt.get("action") or ""),
+                        reason=str(mgmt.get("reason") or ""),
+                        symbol=str(pos.instrument.symbol),
+                        position_id=pos.id,
+                        extra={
+                            "suggested_sl": mgmt.get("suggested_sl"),
+                            "suggested_target": mgmt.get("suggested_target"),
+                        },
                     )
                 except Exception:  # noqa: BLE001
                     pass

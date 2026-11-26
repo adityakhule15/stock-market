@@ -135,3 +135,13 @@ class Command(BaseCommand):
             )
         else:
             self.stdout.write(self.style.ERROR("4/4 No champion after bootstrap — scans will be empty"))
+
+        # Patterns Desk: NIFTY/BANKNIFTY history + index_pattern_lgbm (best-effort)
+        try:
+            self.stdout.write("Patterns Desk: backfill NIFTY/BANKNIFTY…")
+            call_command("backfill_indexdesk", years=max(int(options["years"]), 5))
+            if not options["skip_train"]:
+                self.stdout.write("Patterns Desk: train index_pattern_lgbm…")
+                call_command("train_indexdesk")
+        except Exception as exc:  # noqa: BLE001
+            self.stdout.write(self.style.WARNING(f"Patterns Desk bootstrap skipped: {exc}"))

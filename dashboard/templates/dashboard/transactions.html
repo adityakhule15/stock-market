@@ -1,0 +1,106 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Transactions — StockScope{% endblock %}
+{% block content %}
+<div class="desk-toolbar">
+  <div>
+    <h1>Transactions</h1>
+    <p class="page-sub">Every buy/sell leg that moves the paper wallet. Dummy practice fills are hidden unless enabled.</p>
+  </div>
+  <div class="row" style="flex-wrap:wrap;gap:0.45rem">
+    <button type="button" id="btn-rebuild-wallet">Rebuild wallet from fills</button>
+    {% if include_dummy %}
+    <a class="secondary" href="{% url 'transactions' %}" style="text-decoration:none;padding:0.45rem 0.85rem;border:1px solid var(--line);border-radius:6px;color:var(--text)">Hide dummy</a>
+    {% else %}
+    <a class="secondary" href="{% url 'transactions' %}?dummy=1" style="text-decoration:none;padding:0.45rem 0.85rem;border:1px solid var(--line);border-radius:6px;color:var(--text)">Show dummy</a>
+    {% endif %}
+  </div>
+</div>
+<span id="tx-status" class="muted" style="display:block;margin:-0.35rem 0 0.85rem;font-size:0.85rem"></span>
+
+{% if wallet_audit %}
+<div class="card" style="margin-bottom:1rem">
+  <strong>Wallet check</strong>
+  <div class="kv" style="margin-top:0.5rem">
+    <div><span class="muted">Start</span><div class="mono">₹{{ wallet_audit.start_equity }}</div></div>
+    <div><span class="muted">Fill net</span><div class="mono">₹{{ wallet_audit.fill_net }}</div></div>
+    <div><span class="muted">Open locked</span><div class="mono">₹{{ wallet_audit.open_locked }}</div></div>
+    <div><span class="muted">Equity now</span><div class="mono">₹{{ wallet_audit.after.equity }}</div></div>
+    <div><span class="muted">Cash now</span><div class="mono">₹{{ wallet_audit.after.cash }}</div></div>
+    <div><span class="muted">Correction</span><div class="mono {% if wallet_audit.delta_equity %}pnl-down{% endif %}">₹{{ wallet_audit.delta_equity }}</div></div>
+  </div>
+  <p class="muted" style="margin:0.55rem 0 0;font-size:0.82rem">
+    Formula: equity = start ₹{{ wallet_audit.start_equity }} + sum(non-dummy fill nets).
+    Cash = equity − open locks. This page auto-runs the check on load.
+  </p>
+</div>
+{% endif %}
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>When</th>
+        <th>Pos</th>
+        <th>Contract</th>
+        <th>Side</th>
+        <th>Price</th>
+        <th>Units</th>
+        <th>Turnover</th>
+        <th>Charges</th>
+        <th>Net</th>
+        <th>Balance</th>
+        <th>Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr {% if r.is_dummy %}style="opacity:0.55"{% endif %}>
+        <td class="mono">{{ r.placed_at|date:"d-M H:i" }}</td>
+        <td>{% if r.position_id %}#{{ r.position_id }}{% else %}—{% endif %}</td>
+        <td>{{ r.contract }}{% if r.is_dummy %} <span class="badge age">dummy</span>{% endif %}</td>
+        <td class="{% if r.side == 'BUY' %}pnl-down{% else %}pnl-up{% endif %}">{{ r.side }}</td>
+        <td class="mono">₹{{ r.price }}</td>
+        <td class="mono">{{ r.units }}</td>
+        <td class="mono">₹{{ r.turnover }}</td>
+        <td class="mono">₹{{ r.charges }}</td>
+        <td class="mono {% if r.net >= 0 %}pnl-up{% else %}pnl-down{% endif %}">₹{{ r.net }}</td>
+        <td class="mono">₹{{ r.balance_after }}</td>
+        <td class="muted">{{ r.source }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="11" class="muted">No transactions yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  var CSRF = '{{ csrf_token }}';
+  var btn = document.getElementById('btn-rebuild-wallet');
+  var st = document.getElementById('tx-status');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    if (st) st.textContent = 'Rebuilding wallet from fills…';
+    fetch('/api/wallet/rebuild/', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: '{}'
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) {
+        if (st) st.textContent = 'Wallet set to ₹' + d.after.equity + ' (Δ ₹' + d.delta_equity + ')';
+        setTimeout(function () { location.reload(); }, 400);
+      } else {
+        if (st) st.textContent = d.error || 'failed';
+      }
+    }).catch(function (e) {
+      if (st) st.textContent = String(e);
+    }).finally(function () { btn.disabled = false; });
+  });
+})();
+</script>
+{% endblock %}

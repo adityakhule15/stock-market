@@ -477,8 +477,43 @@ def _fno_option_tickets(
             float(pf.equity),
             pause_below,
         )
+        try:
+            from signals.skip_log import record as record_skip
+
+            record_skip(
+                "F&O",
+                "ALL",
+                f"paused — equity ₹{float(pf.equity):.0f} below floor ₹{pause_below:.0f}",
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return out
     fno_min_prob = float(getattr(cfg, "FNO_MIN_PROB", cfg.MIN_PROB))
+    try:
+        from signals.skip_log import clear as clear_skips
+
+        clear_skips()
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _patterns_bias(name: str) -> str | None:
+        """Latest Patterns Desk bias for index underlyings (anti-confusion with dual CE/PE)."""
+        try:
+            from indexdesk.constants import UNDERLYINGS
+            from indexdesk.engine import latest_snapshot
+
+            if name not in UNDERLYINGS:
+                return None
+            snap = latest_snapshot(name)
+            if snap is None:
+                return None
+            age = (timezone.now() - snap.ts).total_seconds()
+            if age > 900:
+                return None
+            bias = str(snap.bias or "").upper()
+            return bias if bias in {"BULLISH", "BEARISH"} else None
+        except Exception:  # noqa: BLE001
+            return None
 
     names = [u.upper().replace(".NS", "") for u in (underlyings or ["NIFTY", "BANKNIFTY"])]
     for name in names:
@@ -495,6 +530,16 @@ def _fno_option_tickets(
             spot = float(ind["close"].iloc[-1])
             atr = float(ind["atr14"].iloc[-1])
             bullish = spot > float(ind["ema50"].iloc[-1])
+            patterns_bias = _patterns_bias(name)
+            # One trade desk: when Patterns has a clear bias, only show that side on Today
+            if patterns_bias == "BULLISH":
+                bullish = True
+                opt_choices = ("CE",)
+            elif patterns_bias == "BEARISH":
+                bullish = False
+                opt_choices = ("PE",)
+            else:
+                opt_choices = ("CE", "PE")
             now_ist = timezone.localtime()
             inst, _ = Instrument.objects.get_or_create(symbol=name)
             try:
@@ -503,12 +548,24 @@ def _fno_option_tickets(
                 regime = detect_regime()
             except Exception:  # noqa: BLE001
                 regime = {"tag": "range"}
-            # Always offer CALL + PUT; user picks. Debit hard-capped at ₹2000.
-            for opt in ("CE", "PE"):
+            # Debit hard-capped at ₹2000. Index names follow Patterns bias when available.
+            for opt in opt_choices:
                 plan = build_fno_plan(
                     name, spot, bullish=(opt == "CE"), atr=atr, capital=wallet, option_type=opt
                 )
                 if not plan.get("affordable"):
+                    try:
+                        from signals.skip_log import record as record_skip
+
+                        record_skip(
+                            "F&O",
+                            f"{name} {opt}",
+                            plan.get("warning")
+                            or plan.get("live", {}).get("reason")
+                            or "no live strike fits wallet after Groww charges",
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                     continue
                 debit = min(
                     float(plan.get("buy_debit_rs") or plan["max_premium_budget_rs"]),
@@ -535,6 +592,19 @@ def _fno_option_tickets(
                         float(local_prob),
                         fno_min_prob,
                     )
+                    try:
+                        from signals.skip_log import record as record_skip
+
+                        record_skip(
+                            "F&O",
+                            f"{name} {opt}",
+                            f"edge {float(local_prob)*100:.0f}% below min {fno_min_prob*100:.0f}% "
+                            f"(need stronger setup)",
+                            local_prob=float(local_prob),
+                            min_prob=fno_min_prob,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                     continue
                 order = {
                     "side": "BUY",
@@ -585,12 +655,16 @@ def _fno_option_tickets(
                 # F&O remains watch_only — user confirms live premium on Groww
                 gate.passed = False
                 preferred = (bullish and opt == "CE") or ((not bullish) and opt == "PE")
+                desk_note = (
+                    f"Patterns Desk {patterns_bias} → only {opt}"
+                    if patterns_bias
+                    else ("bias matches" if preferred else "counter-bias — skip if unsure")
+                )
                 gate.reasons = [
                     f"watch — {name} {'CALL' if opt == 'CE' else 'PUT'} "
-                    f"(max debit ₹{debit:.0f} ≤ ₹2000; confirm live premium on Groww)"
-                ] + (["bias matches"] if preferred else ["counter-bias — smaller size / skip if unsure"]) + list(
-                    gate.reasons
-                )
+                    f"(max debit ₹{debit:.0f} ≤ ₹2000; confirm live premium on Groww)",
+                    desk_note,
+                ] + list(gate.reasons)
                 if not plan.get("affordable"):
                     pipe_out["pipeline"].setdefault("budget", {})["fno_fits"] = False
                     pipe_out["pipeline"]["budget"]["reason"] = "no F&O lot fits the wallet — show Normal ideas only"
@@ -626,6 +700,8 @@ def _fno_option_tickets(
                             "wait_range": session_bounds()["wait_range_fno"],
                             "hold_until": session_bounds()["hold_until_fno"],
                             "data_as_of_label": session_bounds()["session_label"],
+                            "patterns_bias": patterns_bias,
+                            "source_desk": "patterns" if patterns_bias else "today",
                         },
                         watch_only=True,
                     )

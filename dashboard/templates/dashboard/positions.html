@@ -236,7 +236,7 @@
               <option value="target">Target</option>
               <option value="stop">SL</option>
             </select>
-            <input id="tags-{{ p.id }}" type="text" placeholder="mistake tags (comma)" />
+            <input id="tags-{{ p.id }}" type="text" value="followed_signal_correctly" placeholder="mistake tags (comma)" />
             <input id="note-{{ p.id }}" type="text" placeholder="note" />
             <button type="button" class="btn-close" data-act="close" data-id="{{ p.id }}">Confirm square off</button>
           </div>
@@ -673,11 +673,18 @@
     }
     var exitEl = document.getElementById('exit-' + id);
     var reasonEl = document.getElementById('reason-' + id);
-    var exit = Number(exitEl && exitEl.value);
+    var rawExit = exitEl && exitEl.value;
+    var exit = Number(rawExit);
+    if (rawExit == null || String(rawExit).trim() === '' || !isFinite(exit) || exit <= 0) {
+      outEl().textContent = 'Enter Groww exit LTP before Confirm square off';
+      if (exitEl) exitEl.focus();
+      return;
+    }
     var reason = (reasonEl && reasonEl.value) || 'manual';
-    var exitReason = reason === 'stop' ? 'sl' : reason;
+    var exitReason = reason === 'stop' ? 'sl' : (reason === 'manual' ? 'manual_early' : reason);
     var tagsRaw = (document.getElementById('tags-' + id) || {}).value || 'followed_signal_correctly';
     var tags = String(tagsRaw).split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+    if (!tags.length) tags = ['followed_signal_correctly'];
     var note = (document.getElementById('note-' + id) || {}).value || '';
     outEl().textContent = 'Squaring off…';
     api('/api/positions/' + id + '/close/', {
@@ -695,7 +702,12 @@
         if (window.toast) toast('Closed with review');
         setTimeout(function () { location.reload(); }, 600);
       } else {
-        outEl().textContent = (res.data && res.data.error) || JSON.stringify(res.data);
+        var err = (res.data && res.data.error) || JSON.stringify(res.data);
+        outEl().textContent = err;
+        if (res.data && res.data.already_closed) {
+          if (window.toast) toast('Already closed — refreshing');
+          setTimeout(function () { location.reload(); }, 700);
+        }
       }
     }).catch(function (e) { outEl().textContent = String(e); });
   }
@@ -727,7 +739,10 @@
           if (!res.data || !res.data.ok) return;
           var m = res.data.management;
           if (m && res.data.action_changed && window.ssNotify) {
-            ssNotify(m.action, m.reason || '');
+            var detail = m.reason || '';
+            if (m.suggested_sl != null) detail += (detail ? ' · ' : '') + 'SL ₹' + m.suggested_sl;
+            if (m.suggested_target != null) detail += (detail ? ' · ' : '') + 'Tgt ₹' + m.suggested_target;
+            ssNotify(m.action, detail);
           }
           if (m && m.suggested_sl != null) {
             var row = document.getElementById('pos-' + id) || btn.closest('tr');

@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "research",
     "forecast",
     "evidence",
+    "indexdesk",
 ]
 
 MIDDLEWARE = [

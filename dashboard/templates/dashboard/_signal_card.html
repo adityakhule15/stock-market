@@ -1,12 +1,12 @@
 {% if session_stage %}
-<div class="card" style="margin-bottom:0.75rem">
+<div class="card" style="margin-bottom:0.75rem;padding:0.75rem 1rem">
   <strong>{{ session_stage.stage }}</strong>
   <span class="muted"> · {{ session_stage.banner|default:"" }}</span>
 </div>
 {% endif %}
 
 {% if open_positions %}
-<div class="card" style="margin-bottom:0.75rem">
+<div class="card" style="margin-bottom:0.75rem;padding:0.75rem 1rem">
   <strong>Your open calls</strong>
   <ul style="margin:0.4rem 0 0;padding-left:1.1rem;font-size:0.9rem">
     {% for p in open_positions %}
@@ -17,33 +17,56 @@
 </div>
 {% endif %}
 
-{% if no_trade and not signals %}
+{% if not hero_fno and not signals %}
+{% if empty_reasons or no_trade %}
 <div class="card" style="border-color:var(--amber);margin-bottom:0.75rem">
-  <strong>Sit out</strong>
+  <strong>Why no calls</strong>
+  {% if empty_reasons %}
+  <ul style="margin:0.45rem 0 0;padding-left:1.1rem;font-size:0.88rem;line-height:1.45">
+    {% for r in empty_reasons %}
+    <li>{{ r }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
   <p class="muted" style="margin:0.4rem 0 0">{{ no_trade }}</p>
+  {% endif %}
   {% if fno_unlock %}
   <p class="muted" style="margin:0.4rem 0 0;font-size:0.85rem">
     Options practice: {{ fno_unlock.n }} of {{ fno_unlock.needed }}
     {% if fno_unlock.avg_net != None %} · avg net ₹{{ fno_unlock.avg_net }}{% endif %}
   </p>
   {% endif %}
+  <p class="muted" style="margin:0.5rem 0 0;font-size:0.82rem">
+    Tip: Scan now refreshes tickets. For NIFTY/BANKNIFTY direction, check Patterns — then place only the matching ticket here.
+  </p>
 </div>
+{% endif %}
+{% endif %}
+
+{% if hero_fno or signals %}
+<p class="muted" style="margin:0 0 0.75rem;font-size:0.85rem">
+  Stocks {{ normal_count }} · Options {{ fno_count }} · top {{ top_n }} · wallet ₹{{ wallet }}
+</p>
+{% endif %}
+
+{% if hero_fno %}
+  {% include "dashboard/_fno_hero.html" with s=hero_fno glossary=glossary %}
 {% endif %}
 
 {% if signals %}
-<p class="muted" style="margin:0 0 0.75rem;font-size:0.85rem">
-  Stocks (delivery) {{ normal_count }} · Options (same day) {{ fno_count }} · top {{ top_n }} · wallet ₹{{ wallet }}
-</p>
 <div class="grid">
 {% for s in signals %}
   {% with cs=s.card_state meta=s.rank_meta fno=s.reasons.fno links=s.groww %}
-  <div class="card" id="sig-{{ s.id }}" data-state="{{ cs.state }}">
+  <div class="card ticket-card{% if s.ticket_kind == 'fno' %} fno-ticket{% endif %}" id="sig-{{ s.id }}" data-state="{{ cs.state }}"{% if s.ticket_kind == "fno" and fno %} data-underlying="{{ fno.underlying }}"{% endif %}>
     <div class="row" style="justify-content:space-between">
       <div>
         <strong>{{ s.instrument.symbol|cut:".NS" }}</strong>
         <span class="muted">{{ s.side }}</span>
         {% if s.ticket_kind == "fno" %}
         <span class="badge age">Options · same day</span>
+        {% if s.reasons.patterns_desk or s.reasons.source_desk == "patterns" %}
+        <span class="badge age">From Patterns</span>
+        {% endif %}
         {% else %}
         <span class="badge age">Stocks · delivery</span>
         {% endif %}
@@ -70,17 +93,33 @@
     <p class="muted" style="font-size:0.85rem;margin:0.35rem 0">{{ cs.reason }}</p>
     {% endif %}
 
+    {% if s.ticket_kind == "fno" and fno %}
+    <div class="levels-grid">
+      <div class="level-cell">
+        <div class="level-lbl">Entry</div>
+        <div class="level-val entry mono">₹{{ s.entry_trigger }}</div>
+      </div>
+      <div class="level-cell">
+        <div class="level-lbl">Target</div>
+        <div class="level-val target mono">₹{% if fno.target_ltp %}{{ fno.target_ltp }}{% else %}{{ s.target1 }}{% endif %}</div>
+      </div>
+      <div class="level-cell">
+        <div class="level-lbl">Stop</div>
+        <div class="level-val sl mono">₹{{ s.sl_trigger }}</div>
+      </div>
+    </div>
+    <div class="kv" style="margin-top:0.5rem">
+      <span>Contract</span><span>{{ fno.underlying }} {{ fno.strike }} {{ fno.option_type }} · 1 lot</span>
+      <span>Debit</span><span>₹{{ fno.buy_debit_rs }}</span>
+    </div>
+    {% else %}
     <div class="kv" style="margin-top:0.5rem">
       <span>Entry</span><span>₹{{ s.entry_trigger }}</span>
       <span>Stop</span><span>₹{{ s.sl_trigger }}</span>
-      <span>Target</span><span>₹{% if s.ticket_kind == "fno" and fno.target_ltp %}{{ fno.target_ltp }}{% else %}{{ s.target1 }}{% endif %}</span>
-      {% if s.ticket_kind == "fno" and fno %}
-      <span>Contract</span><span>{{ fno.underlying }} {{ fno.strike }} {{ fno.option_type }} · 1 lot</span>
-      <span>Debit</span><span>₹{{ fno.buy_debit_rs }}</span>
-      {% else %}
+      <span>Target</span><span>₹{{ s.target1 }}</span>
       <span>Qty</span><span>{{ s.qty }} shares</span>
-      {% endif %}
     </div>
+    {% endif %}
 
     {% if cs.show_copy or cs.show_practice %}
     <div class="action-strip">
@@ -114,8 +153,12 @@
   {% endwith %}
 {% endfor %}
 </div>
-{% elif not no_trade %}
+{% elif not hero_fno and not no_trade %}
 <div class="card"><p class="muted">No tickets fit the wallet. Scan Stocks or Options.</p></div>
+{% endif %}
+
+{% if no_trade and hero_fno %}
+<p class="muted" style="margin-top:0.75rem;font-size:0.85rem">{{ no_trade }}</p>
 {% endif %}
 
 {% if expired_signals %}

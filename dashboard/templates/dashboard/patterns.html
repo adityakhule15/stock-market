@@ -1,0 +1,84 @@
+{% extends "dashboard/base.html" %}
+{% load static %}
+{% block title %}Patterns — StockScope{% endblock %}
+{% block content %}
+<div class="desk-toolbar">
+  <div>
+    <h1>Patterns</h1>
+    <p class="page-sub">NIFTY &amp; BANKNIFTY bias &amp; pattern desk. Ideas only — place every order from <a href="{% url 'signals' %}">Today</a>.</p>
+  </div>
+  <div class="row" style="flex-wrap:wrap;gap:0.45rem">
+    <span class="badge age"><span class="live-dot" aria-hidden="true"></span> Desk</span>
+    <button type="button" id="btn-patterns-refresh">Refresh now</button>
+    <button type="button" id="btn-patterns-backfill" class="secondary">Load 5y data</button>
+    <button type="button" id="btn-patterns-train" class="secondary">Train model</button>
+    <a class="secondary" href="{% url 'advisor' %}" style="text-decoration:none;padding:0.45rem 0.85rem;border:1px solid var(--line);border-radius:6px;color:var(--text)">Ask Coach</a>
+  </div>
+</div>
+<span id="patterns-status" class="muted" style="display:block;margin:-0.35rem 0 0.35rem;font-size:0.85rem"></span>
+<span id="patterns-model" class="muted" style="display:block;margin:0 0 0.55rem;font-size:0.82rem"></span>
+<div class="card" style="margin-bottom:0.85rem;padding:0.7rem 1rem;border-color:var(--amber)">
+  <strong>One trade list</strong>
+  <span class="muted"> · Patterns picks the index side (CE or PE). That idea is copied to Today — do not buy the opposite ticket.</span>
+</div>
+
+<div class="index-selects" id="pat-tabs" role="tablist">
+  <button type="button" data-u="NIFTY" class="{% if active_underlying == 'NIFTY' %}active{% endif %}">NIFTY</button>
+  <button type="button" data-u="BANKNIFTY" class="{% if active_underlying == 'BANKNIFTY' %}active{% endif %}">BANKNIFTY</button>
+</div>
+
+<div class="pat-hero" id="pat-hero">
+  <div class="pat-hero-main">
+    <div class="muted">Active underlying</div>
+    <div class="pat-title mono" id="pat-name">{{ active_underlying }}</div>
+    <div class="pat-spot mono" id="pat-spot">—</div>
+    <div class="muted" id="pat-spot-src" style="font-size:0.8rem"></div>
+  </div>
+  <div class="pat-bias-block">
+    <div class="muted">Bias</div>
+    <div class="pat-bias" id="pat-bias">—</div>
+    <div class="pat-probs mono" id="pat-probs">P(up) — · P(down) —</div>
+    <div class="muted" id="pat-model" style="font-size:0.8rem;margin-top:0.35rem"></div>
+  </div>
+  <div class="pat-call-block" id="pat-call">
+    <div class="muted">Primary call</div>
+    <div class="pat-call-action" id="pat-call-action">—</div>
+    <div class="pat-call-detail mono" id="pat-call-detail"></div>
+  </div>
+</div>
+
+<div class="pat-calls-grid">
+  <section class="pat-panel">
+    <h3>Same-day Options</h3>
+    <p class="muted" style="font-size:0.78rem;margin:0 0 0.5rem">Enter today · square off by 15:10 IST</p>
+    <div class="kv" id="pat-ticket-same"></div>
+  </section>
+  <section class="pat-panel">
+    <h3>Next-day Options</h3>
+    <p class="muted" style="font-size:0.78rem;margin:0 0 0.5rem">Buy for next session · NRML</p>
+    <div class="kv" id="pat-ticket-next"></div>
+  </section>
+  <section class="pat-panel">
+    <h3>Normal / Swing</h3>
+    <p class="muted" style="font-size:0.78rem;margin:0 0 0.5rem">Index levels + linked CNC stocks (not same-day F&amp;O)</p>
+    <div class="kv" id="pat-ticket-normal"></div>
+    <ul class="pat-list" id="pat-linked" style="margin-top:0.65rem"></ul>
+  </section>
+</div>
+
+<div class="pat-grid" style="margin-top:1rem">
+  <section class="pat-panel">
+    <h3>Active patterns</h3>
+    <ul class="pat-list" id="pat-list"></ul>
+  </section>
+  <section class="pat-panel" style="grid-column: span 2">
+    <h3>Open positions advice</h3>
+    <ul class="pat-list" id="pat-pos"></ul>
+  </section>
+</div>
+
+<script>
+  window.__PATTERNS_ACTIVE__ = "{{ active_underlying|escapejs }}";
+</script>
+<script src="{% static 'dashboard/patterns.js' %}"></script>
+{% endblock %}

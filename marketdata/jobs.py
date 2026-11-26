@@ -103,7 +103,41 @@ def eod_ingest():
         maybe_learn_consensus_weights()
     except Exception as exc:  # noqa: BLE001
         logger.exception("shadow resolve: %s", exc)
-    return f"ok={sum(1 for v in results.values() if v)} shadow_stocks={shadow_n}"
+    index_eod = {}
+    try:
+        from indexdesk.data import eod_append_and_summary
+
+        index_eod = eod_append_and_summary()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("indexdesk eod append: %s", exc)
+        index_eod = {"ok": False, "error": str(exc)[:120]}
+    return (
+        f"ok={sum(1 for v in results.values() if v)} shadow_stocks={shadow_n} "
+        f"indexdesk={index_eod.get('ok')}"
+    )
+
+
+def indexdesk_session_poll():
+    """During session: refresh 1m/5m + INDstocks spot, score patterns."""
+    from indexdesk.data import poll_index_session
+    from indexdesk.engine import analyze_all
+
+    poll = poll_index_session()
+    board = analyze_all(persist=True)
+    n_ok = len(board.get("underlyings") or {})
+    n_err = len(board.get("errors") or {})
+    return f"spots={list((poll.get('spots') or {}).keys())} scored={n_ok} err={n_err}"
+
+
+def indexdesk_nightly_retrain():
+    """After EOD bars appended: retrain index_pattern_lgbm for next day."""
+    from indexdesk.train import train_index_model
+
+    mv, promoted, metrics = train_index_model(promote=True)
+    return (
+        f"index_v{mv.version} promoted={promoted} "
+        f"exp={metrics.get('expectancy_R')} n={metrics.get('n_rows')}"
+    )
 
 
 def fno_practice_scan():
@@ -184,6 +218,12 @@ def nightly_retrain():
     except Exception as exc:  # noqa: BLE001
         logger.exception("meta retrain failed")
         meta = {"promoted": False, "reason": str(exc)[:200]}
+    index_txt = ""
+    try:
+        index_txt = indexdesk_nightly_retrain()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("indexdesk nightly retrain failed")
+        index_txt = f"indexdesk_err={exc}"
     # Light candidate train without Optuna — save as candidate only (no promote)
     try:
         from ml.retrain import retrain_and_maybe_promote
@@ -193,10 +233,11 @@ def nightly_retrain():
         return (
             f"nightly candidate v{mv.version} promoted={False} "
             f"(weeknight save-only) rollback={rolled} "
-            f"meta_promoted={meta.get('promoted')} meta_n={meta.get('n', 0)}"
+            f"meta_promoted={meta.get('promoted')} meta_n={meta.get('n', 0)} "
+            f"{index_txt}"
         )
     except Exception as exc:  # noqa: BLE001
-        return f"nightly data-only rollback={rolled} err={exc}"
+        return f"nightly data-only rollback={rolled} err={exc} {index_txt}"
 
 
 def weekly_retrain():
@@ -227,10 +268,40 @@ def drift_check():
     return f"psi={rep.psi_max:.3f}"
 
 
+def manage_open_positions():
+    """Every ~2 min in session: reanalyze opens → Windows EXIT NOW / raise-target alerts."""
+    from portfolio.models import Position
+    from portfolio.services import reanalyze_position
+
+    opens = list(
+        Position.objects.filter(status=Position.Status.OPEN)
+        .select_related("instrument", "signal")
+        .order_by("id")[:30]
+    )
+    if not opens:
+        return "no opens"
+    changed = []
+    for pos in opens:
+        try:
+            out = reanalyze_position(pos)
+            if out.get("action_changed"):
+                act = (out.get("management") or {}).get("action")
+                changed.append(f"#{pos.id}:{act}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("manage_open #%s: %s", pos.id, exc)
+    return f"checked={len(opens)} changed={changed or 'none'}"
+
+
 def square_off_reminder():
     if not cfg.INTRADAY_ENABLED:
         return "disabled"
     send_message("StockScope: square off any open MIS by 15:10 IST")
+    try:
+        from notifications.desktop import notify_windows
+
+        notify_windows("StockScope · EXIT NOW", "Square off open MIS / same-day options by 15:10 IST")
+    except Exception:  # noqa: BLE001
+        pass
     return "sent"
 
 
@@ -238,6 +309,12 @@ def cancel_orb_reminder():
     if not cfg.INTRADAY_ENABLED:
         return "disabled"
     send_message("StockScope: cancel untriggered ORB pending orders")
+    try:
+        from notifications.desktop import notify_windows
+
+        notify_windows("StockScope · Cancel pending", "Cancel untriggered ORB pending orders")
+    except Exception:  # noqa: BLE001
+        pass
     return "sent"
 
 

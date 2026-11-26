@@ -1,6 +1,61 @@
 (function () {
+  var INDEX_MAP = {
+    NIFTY: '^NSEI',
+    SENSEX: '^BSESN',
+    BANKNIFTY: '^NSEBANK',
+    INDIAVIX: '^INDIAVIX',
+  };
   function csrf() {
     return window.SS_CSRF || (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '';
+  }
+
+  function fmt(n, d) {
+    if (n == null || isNaN(n)) return '—';
+    return Number(n).toLocaleString('en-IN', {
+      minimumFractionDigits: d == null ? 2 : d,
+      maximumFractionDigits: d == null ? 2 : d,
+    });
+  }
+
+  function setChg(wrapId, textId, chg, pct) {
+    var wrap = document.getElementById(wrapId);
+    var el = document.getElementById(textId);
+    if (!el) return;
+    var up = (chg || 0) >= 0;
+    el.textContent = (up ? '▲ ' : '▼ ') + fmt(Math.abs(chg)) + ' (' + (up ? '+' : '') + fmt(pct) + '%)';
+    if (wrap) {
+      wrap.classList.remove('up', 'down');
+      wrap.classList.add(up ? 'up' : 'down');
+    }
+  }
+
+  async function loadQuote(uiKey, yahooSym) {
+    try {
+      var resp = await fetch('/api/quotes/' + encodeURIComponent(yahooSym) + '/', { cache: 'no-store' });
+      var data = await resp.json();
+      var bar = data.bar || {};
+      var close = bar.close != null ? bar.close : bar.c;
+      var open = bar.open != null ? bar.open : (bar.o != null ? bar.o : close);
+      var chg = close != null && open != null ? close - open : 0;
+      var pct = open ? (chg / open) * 100 : 0;
+      var prefix = uiKey === 'BANKNIFTY' ? 'bank' : uiKey === 'INDIAVIX' ? 'vix' : uiKey.toLowerCase();
+      var priceEl = document.getElementById(prefix + '-price');
+      if (priceEl) priceEl.textContent = fmt(close);
+      setChg(prefix + '-chg-wrap', prefix + '-chg', chg, pct);
+      var ageEl = document.getElementById(prefix + '-age');
+      if (ageEl && data.data_age_min != null) ageEl.textContent = data.data_age_min + 'm ago';
+      if (uiKey === 'INDIAVIX') {
+        var st = document.getElementById('vix-status');
+        if (st) {
+          st.textContent = close >= 18 ? 'Elevated' : close <= 13 ? 'Calm' : 'Normal';
+          st.style.color = close >= 18 ? 'var(--amber)' : 'var(--muted)';
+        }
+      }
+    } catch (e) { /* keep placeholder */ }
+  }
+
+  function loadIndexStrip() {
+    Object.keys(INDEX_MAP).forEach(function (k) { loadQuote(k, INDEX_MAP[k]); });
   }
 
   function setTab(tab) {
@@ -21,15 +76,26 @@
     setTab(btn.getAttribute('data-tab'));
   });
 
+  document.getElementById('index-strip')?.addEventListener('click', function (e) {
+    var card = e.target.closest('.index-card[data-symbol]');
+    if (!card) return;
+    var sym = card.getAttribute('data-symbol');
+    if (sym === 'INDIAVIX') return;
+    document.querySelectorAll('#index-strip .index-card').forEach(function (c) {
+      c.classList.toggle('active', c.getAttribute('data-symbol') === sym);
+    });
+  });
+
   var saved = sessionStorage.getItem('ss_tab') || 'all';
   setTab(saved);
+  loadIndexStrip();
 
-  // Poll only while tab visible — every 30s
   var timer = null;
   function poll() {
     if (document.hidden) return;
     var tab = sessionStorage.getItem('ss_tab') || 'all';
     if (window.htmx) htmx.ajax('GET', '/partials/signals/?tab=' + tab, { target: '#signals', swap: 'innerHTML' });
+    loadIndexStrip();
   }
   function startPoll() {
     stopPoll();
@@ -66,7 +132,7 @@
     var st = document.getElementById('scan-status');
     if (st) st.textContent = 'Planning tomorrow… (scanning wallet-fit ideas)';
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 90000) : null;
+    var abortTimer = ctrl ? setTimeout(function () { ctrl.abort(); }, 90000) : null;
     try {
       var resp = await fetch('/api/advisor/tomorrow/', {
         method: 'POST',
@@ -75,21 +141,19 @@
         signal: ctrl ? ctrl.signal : undefined,
       });
       var data = await resp.json();
-      if (timer) clearTimeout(timer);
+      if (abortTimer) clearTimeout(abortTimer);
       if (!resp.ok || data.ok === false) {
         if (st) st.textContent = data.error || data.summary || ('Failed (' + resp.status + ')');
         toast(st.textContent);
         return;
       }
       var msg = data.headline || data.summary || (data.verdict + ' · ' + (data.picks || []).length + ' pick(s)');
-      if (data.warnings && data.warnings.length) {
-        msg += ' · ' + data.warnings[0];
-      }
+      if (data.warnings && data.warnings.length) msg += ' · ' + data.warnings[0];
       if (st) st.textContent = msg;
       toast(msg);
       poll();
     } catch (e) {
-      if (timer) clearTimeout(timer);
+      if (abortTimer) clearTimeout(abortTimer);
       var err = (e && e.name === 'AbortError')
         ? 'Timed out after 90s — check the SERVER window for errors'
         : String(e);
@@ -146,7 +210,6 @@
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf() },
         body: JSON.stringify({ order_confirmed: true, mode: 'paper', practice: true }),
       });
-      // Fallback: manual Groww dummy if mark-taken rejects
       var data = await resp.json();
       if (!data.ok) {
         resp = await fetch('/api/positions/manual-groww/', {

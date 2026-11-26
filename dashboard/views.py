@@ -37,6 +37,14 @@ def advisor_page(request):
     )
 
 
+def patterns_page(request):
+    """NIFTY / BANKNIFTY Patterns Desk — live patterns, probs, wallet-fit calls."""
+    und = (request.GET.get("u") or "NIFTY").upper()
+    if und not in {"NIFTY", "BANKNIFTY"}:
+        und = "NIFTY"
+    return render(request, "dashboard/patterns.html", {"active_underlying": und})
+
+
 def signals_partial(request):
     from django.utils import timezone
 
@@ -322,12 +330,51 @@ def signals_partial(request):
             "at this wallet size. Options stay practice-only until measured results unlock them."
         )
 
+    # Concrete bullet reasons for empty / sit-out board
+    empty_reasons: list[str] = []
+    if not ranked:
+        if ps.life_status == "survival":
+            empty_reasons.append(
+                f"Survival mode (equity ₹{float(ps.equity):.0f}) — at most one idea; prefer sit out"
+            )
+        elif ps.life_status == "dead":
+            empty_reasons.append("Wallet DEAD — no new tickets until life reset in Settings")
+        if stage_info.get("stage") == "PRE_OPEN":
+            empty_reasons.append(
+                "PRE_OPEN — plan only; enter after 09:46 IST"
+            )
+        elif not stage_info.get("fno_actionable") and tab in {"all", "fno"}:
+            empty_reasons.append(
+                "F&O entry window closed — manage opens or use Buy for tomorrow"
+            )
+        if open_positions and ps.life_status == "survival":
+            empty_reasons.append(
+                f"Already {len(open_positions)} open position(s) — Survival allows at most one idea"
+            )
+        if ps.kill_switch:
+            empty_reasons.append("Kill switch ON — new ideas blocked")
+        try:
+            from signals.skip_log import summary_lines
+
+            for ln in summary_lines(limit=6):
+                empty_reasons.append(ln)
+        except Exception:  # noqa: BLE001
+            pass
+        if empty_explain and empty_explain not in empty_reasons:
+            empty_reasons.insert(0, empty_explain)
+        if not empty_reasons:
+            empty_reasons.append(empty_explain or "No wallet-fit tickets cleared the bar")
+
+    hero_fno = next((s for s in ranked if s.ticket_kind == "fno"), None)
+    board = [s for s in ranked if hero_fno is None or s.id != hero_fno.id]
+
     try:
         return render(
             request,
             "dashboard/_signal_card.html",
             {
-                "signals": ranked,
+                "signals": board,
+                "hero_fno": hero_fno,
                 "expired_signals": expired_board[:12],
                 "tab": tab,
                 "wallet": wallet,
@@ -335,6 +382,7 @@ def signals_partial(request):
                 "normal_count": n_count,
                 "fno_count": f_count,
                 "no_trade": empty_explain,
+                "empty_reasons": empty_reasons,
                 "regime": regime,
                 "open_positions": open_positions,
                 "session_stage": stage_info,
@@ -737,6 +785,67 @@ def settings_page(request):
             "agents": load_agents_settings(),
             "kronos": kronos,
             "models_config": models_cfg,
+            "allow_dead_content": True,
+        },
+    )
+
+
+def transactions_page(request):
+    """All OrderFill legs (paper wallet ledger). Original only by default."""
+    from portfolio.models import OrderFill
+    from portfolio.services import rebuild_wallet_from_fills
+
+    from django.db.models import Q
+
+    include_dummy = str(request.GET.get("dummy") or "0") in {"1", "true", "yes"}
+    # Auto-check wallet against fills on every visit
+    wallet_audit = rebuild_wallet_from_fills()
+    qs = OrderFill.objects.select_related("position", "instrument", "position__instrument")
+    if not include_dummy:
+        qs = qs.filter(Q(position__isnull=True) | Q(position__is_dummy=False))
+    rows = []
+    running = float(wallet_audit["start_equity"])
+    # Chronological for running balance, then reverse for display
+    chrono = list(qs.order_by("placed_at", "id")[:500])
+    for f in chrono:
+        is_dummy = bool(f.position_id and getattr(f.position, "is_dummy", False))
+        net = float(f.net_cash_flow or 0)
+        if not is_dummy:
+            running += net
+        sym = ""
+        if f.position_id and f.position and f.position.instrument_id:
+            sym = f.position.instrument.symbol
+        elif f.instrument_id:
+            sym = f.instrument.symbol
+        rows.append(
+            {
+                "id": f.id,
+                "placed_at": f.placed_at,
+                "symbol": sym,
+                "contract": f.contract or sym,
+                "side": f.side,
+                "product": f.product,
+                "qty": f.qty,
+                "units": f.units,
+                "price": float(f.price),
+                "turnover": float(f.turnover or 0),
+                "charges": float(f.charges_total or 0),
+                "net": net,
+                "balance_after": round(running, 2),
+                "source": f.source,
+                "notes": f.notes or "",
+                "position_id": f.position_id,
+                "is_dummy": is_dummy,
+            }
+        )
+    rows.reverse()  # newest first
+    return render(
+        request,
+        "dashboard/transactions.html",
+        {
+            "rows": rows,
+            "include_dummy": include_dummy,
+            "wallet_audit": wallet_audit,
             "allow_dead_content": True,
         },
     )

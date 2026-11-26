@@ -358,8 +358,12 @@ def get_chain_cached_or_live(
 
     # INDstocks first (official live data) — still never places orders.
     # Always honor max_age_sec so Positions polls don't stampede into HTTP 429.
+    # SENSEX (BSE) is not on the INDstocks NSE index feed.
     try:
         from marketdata import indstocks as ind
+
+        if not ind.supports_underlying(symbol):
+            raise RuntimeError(f"INDstocks unsupported underlying {symbol}")
 
         snap = load_latest_snapshot(symbol, expiry)
         if (
@@ -396,10 +400,13 @@ def get_chain_cached_or_live(
                         return snap
                 raise
     except Exception as exc:  # noqa: BLE001
-        # Quiet repeated 429 spam — one warning style line is enough per cooldown
+        # Quiet repeated 429 / unsupported-underlying spam
         msg = str(exc)
-        if "429" in msg or "rate-limit" in msg.lower() or "cooling down" in msg.lower():
+        low = msg.lower()
+        if "429" in msg or "rate-limit" in low or "cooling down" in low:
             logger.info("INDstocks chain skipped (%s) — NSE/cache fallback", msg[:100])
+        elif "unsupported underlying" in low or "no indstocks underlying-scrip" in low:
+            logger.debug("INDstocks chain skip %s — NSE fallback", msg[:80])
         else:
             logger.warning("INDstocks chain fallback to NSE: %s", exc)
 

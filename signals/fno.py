@@ -502,15 +502,30 @@ def fno_clipboard(plan: dict) -> str:
             f"{plan.get('warning', '1 lot does not fit ₹2000 wallet')}\n"
             f"Use Normal equity tab, or check NIFTY weekly on Groww."
         )
+    strike = plan.get("strike")
+    try:
+        strike_s = f"{float(strike):.0f}" if strike is not None else "—"
+    except (TypeError, ValueError):
+        strike_s = str(strike or "—")
+    action = plan.get("action") or "BUY"
+    und = plan.get("underlying") or plan.get("symbol") or ""
+    opt = plan.get("option_type") or ""
+    expiry = plan.get("expiry_label") or plan.get("expiry") or "—"
+    enter = plan.get("enter_after_ist") or "09:46"
+    square = plan.get("square_off_by_ist") or "15:10"
+    rules = plan.get("exit_rules") or [
+        "Confirm live LTP on Groww before buy",
+        f"Square off by {square} IST",
+    ]
     return (
         f"StockScope F&O (SAME DAY)\n"
-        f"{plan['action']} {plan['underlying']} {plan['strike']:.0f} {plan['option_type']} "
-        f"expiry {plan['expiry_label']} ({plan.get('expiry_kind', 'monthly')})\n"
+        f"{action} {und} {strike_s} {opt} "
+        f"expiry {expiry} ({plan.get('expiry_kind', 'monthly')})\n"
         f"1 lot = {plan.get('lot_size', 0)}\n"
         f"BUY LTP ₹{plan.get('buy_ltp')} → debit ₹{plan.get('buy_debit_rs')}\n"
         f"SL SELL LTP ₹{plan.get('sl_ltp')} → ₹{plan.get('sl_debit_rs')} (loss ₹{plan.get('loss_at_sl_rs')})\n"
         f"TARGET SELL LTP ₹{plan.get('target_ltp')} → ₹{plan.get('target_debit_rs')} (profit ₹{plan.get('profit_at_tgt_rs')})\n"
         f"Max LTP cap ₹{plan.get('max_premium_per_share')} (wallet ₹{plan.get('max_premium_budget_rs')})\n"
-        f"Enter after {plan['enter_after_ist']} IST | SQUARE OFF BY {plan['square_off_by_ist']} IST\n"
-        + "\n".join(f"- {r}" for r in plan["exit_rules"])
+        f"Enter after {enter} IST | SQUARE OFF BY {square} IST\n"
+        + "\n".join(f"- {r}" for r in rules)
     )

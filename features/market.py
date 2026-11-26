@@ -43,10 +43,10 @@ def build_market_ctx(
         n.index = pd.to_datetime(n.index).tz_localize(None) if getattr(n.index, "tz", None) else pd.to_datetime(n.index)
         c = n["close"].astype(float)
         ema50 = c.ewm(span=50, adjust=False).mean()
-        ema50_slope = ema50.pct_change(5)
-        out["nifty_ret_1"] = c.pct_change(1).reindex(index).ffill()
-        out["nifty_ret_5"] = c.pct_change(5).reindex(index).ffill()
-        out["nifty_ret_20"] = c.pct_change(20).reindex(index).ffill()
+        ema50_slope = ema50.pct_change(5, fill_method=None)
+        out["nifty_ret_1"] = c.pct_change(1, fill_method=None).reindex(index).ffill()
+        out["nifty_ret_5"] = c.pct_change(5, fill_method=None).reindex(index).ffill()
+        out["nifty_ret_20"] = c.pct_change(20, fill_method=None).reindex(index).ffill()
         out["nifty_above_ema50"] = (c > ema50).astype(float).reindex(index).ffill()
         out["nifty_ema50_slope"] = ema50_slope.reindex(index).ffill()
     else:
@@ -58,7 +58,7 @@ def build_market_ctx(
         v.index = pd.to_datetime(v.index).tz_localize(None) if getattr(v.index, "tz", None) else pd.to_datetime(v.index)
         vc = v["close"].astype(float)
         out["vix_level"] = vc.reindex(index).ffill()
-        out["vix_chg_5"] = vc.pct_change(5).reindex(index).ffill()
+        out["vix_chg_5"] = vc.pct_change(5, fill_method=None).reindex(index).ffill()
     else:
         out["vix_level"] = float(getattr(cfg, "VIX_LOW", 12.0))
         out["vix_chg_5"] = 0.0
@@ -73,8 +73,8 @@ def relative_strength(stock_close: pd.Series, nifty: pd.DataFrame | None) -> pd.
         return pd.Series(0.0, index=stock_close.index)
     nc = nifty["close"].astype(float)
     nc = nc.reindex(stock_close.index).ffill()
-    stock_ret = stock_close.pct_change(20)
-    nifty_ret = nc.pct_change(20)
+    stock_ret = stock_close.pct_change(20, fill_method=None)
+    nifty_ret = nc.pct_change(20, fill_method=None)
     return (stock_ret - nifty_ret).fillna(0.0)
 
 

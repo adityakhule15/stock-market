@@ -61,6 +61,14 @@ _INDEX_SCRIP = {
     "BANKNIFTY": "40000003",  # BANK NIFTY
 }
 
+# BSE Sensex options are not on INDstocks NSE index feed — use NSE/Yahoo fallback
+_INDSTOCKS_UNSUPPORTED = frozenset({"SENSEX", "BSESN", "^BSESN"})
+
+
+def supports_underlying(symbol: str) -> bool:
+    code = symbol.upper().replace(".NS", "").replace("^", "")
+    return code not in _INDSTOCKS_UNSUPPORTED
+
 # Exact index names from /market/instruments?source=index (col 2)
 _INDEX_NAME_MAP = {
     "NIFTY 50": "NIFTY",
@@ -420,7 +428,9 @@ def _load_underlying_scrips(force: bool = False) -> dict[str, str]:
 
 def underlying_scrip(symbol: str) -> tuple[str, str]:
     """Return (segment INDEX|EQUITY, underlying-scrip id)."""
-    code = symbol.upper().replace(".NS", "")
+    code = symbol.upper().replace(".NS", "").replace("^", "")
+    if code in _INDSTOCKS_UNSUPPORTED:
+        raise RuntimeError(f"INDstocks unsupported underlying {code}")
     scrips = _load_underlying_scrips()
     if code in {"NIFTY", "BANKNIFTY"}:
         return "INDEX", scrips.get(code) or _INDEX_SCRIP.get(code, "")
@@ -435,7 +445,9 @@ def fetch_option_chain(symbol: str, expiry: str | None = None, strike_count: int
 
     Uses a short in-memory TTL so Positions 5–15s polls + scans share one fetch.
     """
-    code = symbol.upper().replace(".NS", "")
+    code = symbol.upper().replace(".NS", "").replace("^", "")
+    if code in _INDSTOCKS_UNSUPPORTED:
+        raise RuntimeError(f"INDstocks unsupported underlying {code}")
     strike_count = max(10, min(int(strike_count or 25), 80))
     segment, scrip = underlying_scrip(code)
     if not scrip:

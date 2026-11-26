@@ -87,20 +87,33 @@ class MarketDataService:
         inst, _ = Instrument.objects.get_or_create(symbol=symbol, defaults={"name": symbol})
         if df.empty:
             return 0
+        # Drop incomplete OHLC rows (Yahoo sometimes returns NaN closes)
+        try:
+            clean = df.dropna(subset=["open", "high", "low", "close"])
+        except Exception:  # noqa: BLE001
+            clean = df
+        if clean.empty:
+            return 0
         rows = []
-        for ts, row in df.iterrows():
+        for ts, row in clean.iterrows():
             ts_dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
             if timezone.is_naive(ts_dt):
                 ts_dt = timezone.make_aware(ts_dt, timezone.get_current_timezone())
+            try:
+                o, h, lo, c = float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])
+            except (TypeError, ValueError):
+                continue
+            if any(v != v for v in (o, h, lo, c)):  # NaN check
+                continue
             rows.append(
                 Bar(
                     instrument=inst,
                     interval=interval,
                     ts=ts_dt,
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
+                    open=o,
+                    high=h,
+                    low=lo,
+                    close=c,
                     volume=float(row.get("volume", 0) or 0),
                     source=source,
                 )

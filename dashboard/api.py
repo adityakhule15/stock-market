@@ -228,15 +228,41 @@ class PositionViewSet(viewsets.ReadOnlyModelViewSet):
         """Close a confirmed trade with exit price + required TradeReview fields."""
         pos = self.get_object()
         if pos.status == Position.Status.CLOSED:
-            return Response({"ok": False, "error": "already closed"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "ok": False,
+                    "error": f"#{pos.id} already closed"
+                    + (f" (P&L ₹{float(pos.pnl):.2f})" if pos.pnl is not None else ""),
+                    "already_closed": True,
+                    "pnl": float(pos.pnl) if pos.pnl is not None else None,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         exit_price = request.data.get("exit_price")
-        if exit_price is None:
-            return Response({"ok": False, "error": "exit_price required"}, status=status.HTTP_400_BAD_REQUEST)
+        if exit_price is None or exit_price == "":
+            return Response(
+                {"ok": False, "error": "exit_price required — paste Groww square-off LTP"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            exit_f = float(exit_price)
+        except (TypeError, ValueError):
+            return Response(
+                {"ok": False, "error": f"invalid exit_price {exit_price!r}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if exit_f <= 0 or exit_f != exit_f:  # NaN check
+            return Response(
+                {"ok": False, "error": "exit_price must be > 0 (Groww LTP)"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         reason = request.data.get("reason", "manual")
         exit_reason = request.data.get("exit_reason") or reason
         tags = request.data.get("mistake_tags") or request.data.get("tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
+        if not tags:
+            tags = ["followed_signal_correctly"]
         # Map legacy reason=stop/target to exit_reason
         if exit_reason == "stop":
             exit_reason = "sl"
@@ -245,7 +271,7 @@ class PositionViewSet(viewsets.ReadOnlyModelViewSet):
         try:
             pos = close_position(
                 pos,
-                float(exit_price),
+                exit_f,
                 reason=str(reason),
                 exit_reason=str(exit_reason),
                 mistake_tags=list(tags),
@@ -476,8 +502,34 @@ def quotes(request, symbol: str):
     svc = MarketDataService()
     try:
         bar, source = svc.latest_bar(symbol)
-        age_min = int((timezone.now() - bar["ts"]).total_seconds() // 60) if bar.get("ts") else None
-        return Response({"symbol": symbol, "bar": {**bar, "ts": bar["ts"].isoformat()}, "source": source, "data_age_min": age_min})
+        # Providers return o/h/l/c; UI expects open/high/low/close — publish both.
+        open_ = bar.get("open", bar.get("o"))
+        high = bar.get("high", bar.get("h"))
+        low = bar.get("low", bar.get("l"))
+        close = bar.get("close", bar.get("c"))
+        volume = bar.get("volume", bar.get("v", 0))
+        norm = {
+            **bar,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+            "o": open_,
+            "h": high,
+            "l": low,
+            "c": close,
+            "v": volume,
+            "ts": bar["ts"].isoformat() if hasattr(bar.get("ts"), "isoformat") else bar.get("ts"),
+        }
+        age_min = None
+        ts = bar.get("ts")
+        if ts is not None:
+            try:
+                age_min = int((timezone.now() - ts).total_seconds() // 60)
+            except Exception:  # noqa: BLE001
+                age_min = None
+        return Response({"symbol": symbol, "bar": norm, "source": source, "data_age_min": age_min})
     except Exception as exc:  # noqa: BLE001
         return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
@@ -763,6 +815,20 @@ def retrain_now(request):
     try:
         detail = nightly_retrain()
         return Response({"ok": True, "detail": detail})
+    except Exception as exc:  # noqa: BLE001
+        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def wallet_rebuild(request):
+    """Force equity/cash = start_equity + sum(non-dummy OrderFill nets)."""
+    from portfolio.services import rebuild_wallet_from_fills
+
+    try:
+        out = rebuild_wallet_from_fills()
+        out["ok"] = True
+        return Response(out)
     except Exception as exc:  # noqa: BLE001
         return Response({"ok": False, "error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1175,3 +1241,104 @@ def positions_stream(request):
     resp["X-Accel-Buffering"] = "no"
     resp["Connection"] = "keep-alive"
     return resp
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def patterns_board(request):
+    """Latest Patterns Desk board (DB snapshot; refreshes if stale)."""
+    from indexdesk.constants import MODEL_NAME
+    from indexdesk.engine import latest_board
+
+    try:
+        out = latest_board()
+        champ = registry.champion(MODEL_NAME)
+        out["model"] = None
+        if champ is not None:
+            m = champ.metrics if isinstance(champ.metrics, dict) else {}
+            out["model"] = {
+                "name": champ.name,
+                "version": champ.version,
+                "status": champ.status,
+                "expectancy_R": m.get("expectancy_R"),
+                "auc": m.get("auc"),
+                "n_rows": m.get("n_rows"),
+                "train_end": str(m.get("train_end") or ""),
+            }
+        return Response(out)
+    except Exception as exc:  # noqa: BLE001
+        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def patterns_refresh(request):
+    """Force live poll + pattern score for NIFTY/BANKNIFTY."""
+    from indexdesk.data import poll_index_session
+    from indexdesk.engine import analyze_all
+
+    try:
+        poll = poll_index_session()
+        board = analyze_all(persist=True)
+        board["poll"] = poll
+        return Response(board)
+    except Exception as exc:  # noqa: BLE001
+        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def patterns_backfill(request):
+    """UI button: backfill 5y daily + rolling 1m/5m for NIFTY/BANKNIFTY."""
+    from indexdesk.constants import DAILY_YEARS
+    from indexdesk.data import backfill_index_history
+
+    data = request.data or {}
+    try:
+        years = int(data.get("years") or DAILY_YEARS)
+    except (TypeError, ValueError):
+        years = DAILY_YEARS
+    years = max(1, min(years, 10))
+    force = data.get("force") in (True, "true", "1", 1, "yes")
+    try:
+        detail = backfill_index_history(years=years, force=force)
+        return Response({"ok": True, "years": years, "detail": detail})
+    except Exception as exc:  # noqa: BLE001
+        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def patterns_train(request):
+    """UI button: train/promote index_pattern_lgbm on NIFTY + BANKNIFTY."""
+    from indexdesk.train import train_index_model
+
+    promote = (request.data or {}).get("promote", True) not in (False, "false", "0", 0, "no")
+    try:
+        mv, promoted, metrics = train_index_model(promote=promote)
+        return Response(
+            {
+                "ok": True,
+                "version": mv.version,
+                "promoted": promoted,
+                "expectancy_R": metrics.get("expectancy_R"),
+                "auc": metrics.get("auc"),
+                "n_rows": metrics.get("n_rows"),
+                "detail": f"v{mv.version} promoted={promoted}",
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Response({"ok": False, "error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def patterns_one(request, underlying: str):
+    from indexdesk.engine import analyze_underlying
+
+    try:
+        return Response(analyze_underlying(underlying, persist=True))
+    except ValueError as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as exc:  # noqa: BLE001
+        return Response({"error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

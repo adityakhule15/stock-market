@@ -41,6 +41,16 @@ def _register(sched) -> None:
         wrap("option_mark_snapshot", jobs.option_mark_snapshot),
         CronTrigger(day_of_week="mon-fri", hour="9-14", minute="*/5"),
     )
+    # Patterns Desk: INDstocks spot + 1m/5m + pattern score during session
+    sched.add_job(
+        wrap("indexdesk_session_poll", jobs.indexdesk_session_poll),
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/5"),
+    )
+    # Open-position management → Windows EXIT NOW / raise-target / trail alerts
+    sched.add_job(
+        wrap("manage_open_positions", jobs.manage_open_positions),
+        CronTrigger(day_of_week="mon-fri", hour="9-15", minute="*/2"),
+    )
     sched.add_job(
         wrap("cancel_orb_reminder", jobs.cancel_orb_reminder),
         CronTrigger(day_of_week="mon-fri", hour=14, minute=0),
